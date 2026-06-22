@@ -1,20 +1,8 @@
+target := "rvsc1-unknown-elf"
+
+import "../common.just"
+
 default: test
-
-# Configure GCC out-of-tree build (run once)
-configure:
-    mkdir -p build
-    cd build && ../../../configure \
-        --target=rvsc1-unknown-elf \
-        --prefix=$(pwd)/../install \
-        --enable-languages=c
-
-# Build the compiler
-build:
-    cd build && make all-gcc -j`nproc`
-
-# Install the compiler
-install:
-    cd build && make install-gcc
 
 # ISA compliance: compile → assemble → disassemble → check allowlist
 test:

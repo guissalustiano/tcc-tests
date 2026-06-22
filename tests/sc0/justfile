@@ -1,3 +1,7 @@
+target := "rvsc0-unknown-elf"
+
+import "../common.just"
+
 default: test
 
 # Run all sc0 ISA compliance tests

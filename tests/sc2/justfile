@@ -1,9 +1,13 @@
+target := "rvsc2-unknown-elf"
+
+import "../common.just"
+
 default: test
 
 # Run all sc2 ISA compliance tests
 test:
-    python3 main.py
+    PATH="{{prefix}}/bin:$PATH" python3 main.py
 
 # Run a single source file
 test-one file:
-    python3 main.py {{file}}
+    PATH="{{prefix}}/bin:$PATH" python3 main.py {{file}}

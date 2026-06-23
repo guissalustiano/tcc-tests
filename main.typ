@@ -265,12 +265,21 @@ The remainder of this monograph is organized as follows. #chref(<ch-related-work
 
 = Related Work <ch-related-work>
 
-// TODO: discuss scope and coverage with advisor.
-// Candidate areas:
-// - Pedagogical RISC-V/MIPS simulators (Venus, RARS, SPIM, MARS) — operate at assembly level, no C compiler
-// - GCC/LLVM backends for restricted embedded ISAs (AVR, MSP430, libgcc soft-float) — closest technical precedent
-// - Custom GCC backends for research/academic ISAs (OpenRISC, PULP) — demonstrates backend extensibility
-// - ISA subset selection in compiler research — design-time vs. this work's compile-time synthesis direction
+The two bodies of work most relevant to this project are GCC's established mechanisms for synthesizing hardware-absent operations, applied in the embedded domain for decades, and pedagogical tools for instruction-set-level computing education.
+
+== Instruction Synthesis in Compiler Backends
+
+GCC has long supported targets whose processors lack hardware instructions for certain operations. The canonical example is soft-float: on targets without a floating-point unit, all floating-point operations are transparently replaced by sequences of integer instructions, with no change required from the programmer @gcc-internals. The same approach has been applied to integer operations on embedded targets such as the MSP430, which lacks a barrel shifter, and the AVR, which lacks a hardware multiplier on some variants @gcc-internals. In all cases the programmer writes standard C, and the compiler silently emits the necessary replacement sequences, at the cost of additional instructions and a correspondingly larger binary. Hauser et al. @hauser2020 quantify this effect for embedded RISC-V targets, showing that backend choices have a measurable impact on code size.
+
+This work applies the same principle to a more extreme case: the sc0 and sc1 targets must synthesize not just a handful of absent operations, but nearly every operation the processor does not natively support, because their instruction sets are far smaller than those of typical embedded targets.
+
+== Pedagogical Instruction-Set Tools
+
+A distinct body of work provides tools for computer architecture education at the assembly level. Venus @venus, RARS @rars, and MARS @mars are simulators that accept programs written directly in assembly and execute them step by step. None of them performs C compilation; the programmer works at the assembly level from the outset.
+
+BRISC-V @brisc-v provides an open-source parameterised RISC-V processor family for computer architecture education together with a standard GCC toolchain. The toolchain targets the full RV32I instruction set, with no mechanism to restrict the compiler to a hardware-defined subset.
+
+This work sits at the intersection of these two lines: it brings the instruction synthesis approach from the embedded compiler domain into the pedagogical setting of the Hennessy-Patterson processor @patterson2020, enabling students to write C programs that run correctly on a processor with a deliberately minimal instruction set.
 
 
 = Conceptual Background <ch-background>

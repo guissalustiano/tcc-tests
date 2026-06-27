@@ -81,5 +81,9 @@ stamp-*
 /scw/sc*/build/
 /scw/sc*/install/
 
+# tests build directories
+/tests/sc*/build/
+/tests/sc*/build-binutils/
+
 main.pdf
 /tesis-reference/

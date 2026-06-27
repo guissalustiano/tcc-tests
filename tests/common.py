@@ -51,6 +51,33 @@ def assemble(assembler: str, march: str, asm_text: str) -> Path:
     return o
 
 
+def compile_to_obj(compiler: str, src: Path, opt: str, cflags: list[str]) -> Path:
+    o = Path(tempfile.mktemp(suffix=".o"))
+    try:
+        _run(compiler, "-c", opt, "-ffreestanding", *cflags, "-o", str(o), str(src))
+    except subprocess.CalledProcessError as e:
+        o.unlink(missing_ok=True)
+        sys.exit(f"compile error ({src.name}):\n{e.stderr.strip()}")
+    return o
+
+
+def validate_source_direct(
+    compiler: str,
+    objdump: str,
+    src: Path,
+    opt: str,
+    allowed: set[str],
+    cflags: list[str],
+) -> tuple[bool, list[str]]:
+    obj = compile_to_obj(compiler, src, opt, cflags)
+    try:
+        mnemonics = disassemble_mnemonics(objdump, obj)
+    finally:
+        obj.unlink(missing_ok=True)
+    violations = sorted({m for m in mnemonics if m not in allowed})
+    return not violations, violations
+
+
 def disassemble_mnemonics(objdump: str, obj: Path) -> list[str]:
     try:
         result = _run(objdump, "-M", "no-aliases", "-d", str(obj))

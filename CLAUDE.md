@@ -4,18 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository layout
 
-Everything lives under `/home/salust/gcc/`:
+Everything lives under `/home/salust/p/scgcc/` (the git repo root):
 
 | Path | Purpose |
 |------|---------|
-| `gcc/config/riscv/` | RISC-V backend — `riscv.md`, `riscv.opt`, `riscv.cc`, `rvscN.h` headers |
-| `scw/` | Build/test workspace — one subdir per target (`sc0`–`sc7`) |
-| `scw/sc1/build/` | Out-of-tree build dir for sc1 (configure once, rebuild repeatedly) |
-| `scw/sc1/install/` | Installed toolchain (`rvsc1-unknown-elf-gcc`, etc.) |
-| `scw/test/` | Test sources, `run_tests.py`, `startup32.S`, `link32.ld` |
+| `gcc/gcc/config/riscv/` | RISC-V backend — `riscv.md`, `riscv.opt`, `riscv.cc`, `rvscN.h` headers |
+| `gcc/gcc/config/config.gcc` | Triple mapping: `rvscN-*-elf*` → `cpu_type=riscv` |
+| `gcc/gcc/config/config.sub` | Triple normalisation: recognises `rvscN` CPU names |
+| `binutils-gdb/` | GNU Binutils source (untracked; assembler + linker) |
+| `tests/` | Build/test workspace — one subdir per target (`sc0`–`sc2`) |
+| `tests/scN/` | Per-target subdir — `justfile`, `build/`, `build-binutils/`, `build/install/`, `tests/` |
+| `tests/sc1/tests/` | ISA compliance and behavioral test sources for sc1 |
+| `tests/common.just` | Shared justfile recipes (configure, build, install for both binutils and gcc) |
 | `main.typ` | Typst academic document (TCC at USP/Poli) |
 
-**Source edits happen in `gcc/config/riscv/`.** Build dirs are never edited directly. Files actually modified for this project: `riscv.md`, `riscv.opt`, `riscv.cc` (constant pool hooks), `rvscN.h` headers, `gcc/config/config.gcc`, `gcc/config/config.sub`.
+**Source edits happen in `gcc/gcc/config/riscv/`.** Build directories are never edited directly. Files actually modified for this project: `riscv.md`, `riscv.opt`, `riscv.cc` (constant pool hooks), `rvscN.h` headers (sc1–sc7), `gcc/gcc/config/config.gcc`, `gcc/gcc/config/config.sub`.
 
 ## Targets
 
@@ -32,22 +35,30 @@ Eight progressive RISC-V GCC target triples model the Hennessy-Patterson educati
 | sc6 | `rvsc6-unknown-elf` | rv64imfd_zicsr | floating point |
 | sc7 | `rvsc7-unknown-elf` | rv64imafd_zicsr | atomics |
 
+## Technologies
+
+| Component | Version | Notes |
+|-----------|---------|-------|
+| GCC | 17.0.0 | Fork at `gcc/`; repo: github.com/guissalustiano/gcc-hannersy-paterson |
+| GNU Binutils | upstream | `riscv32-none-elf` (system) for sc0–sc3 utilities; target-specific `rvscN-unknown-elf` as+ld built from `binutils-gdb/` |
+| Spike | 1.1.1-dev | Invoked as `spike --isa=rv32i`; `--log-commits` counts retired instructions |
+
 ## Build workflow
 
-Each target has its own subdirectory under `scw/` with a `justfile`. Configure once, then iterate — **no binutils build is needed**.
+Each target has its own subdirectory under `tests/` with a `justfile`. The first-time setup builds binutils (assembler + linker) before GCC, since GCC's configure must detect them.
 
 ```sh
-# First-time configure for sc1
-cd scw/sc1 && just configure
+# First-time setup for sc1 (builds binutils, then gcc)
+cd tests/sc1 && just setup
 
-# Build and install (repeat after source changes)
-cd scw/sc1 && just build install
+# Rebuild and reinstall after source edits (repeat after riscv.md / riscv.opt changes)
+cd tests/sc1 && just build install
 
 # Or explicitly with make
-cd scw/sc1/build && make all-gcc -j$(nproc) && make install-gcc
+cd tests/sc1/build && make all-gcc -j$(nproc) && make install-gcc
 ```
 
-Replace `sc1` with the desired target number throughout.
+Replace `sc1` with the desired target number. The installed toolchain lands at `tests/scN/build/install/bin/`.
 
 ## Testing
 
@@ -56,39 +67,86 @@ Two independent layers verify correctness.
 ### ISA compliance (`sc1_*.c` tests)
 
 ```sh
-cd scw/sc1 && just test
-# Runs run_tests.py: compiles every .c in scw/test/ with -S -O1,
+cd tests/sc1 && just test
+# Runs main.py: compiles every .c in tests/sc1/tests/ with -S -O1,
 # assembles with riscv32-none-elf-as, disassembles with
 # riscv32-none-elf-objdump -M no-aliases (expands pseudo-instructions),
-# and checks every mnemonic against instructions.txt.
+# and checks every mnemonic against an allowlist.
 ```
 
 The `-M no-aliases` flag is essential — it expands pseudos like `ret` to `jalr x0, 0(ra)` before the allowlist check, so forbidden instructions cannot pass disguised as pseudos.
 
-`scw/sc1/instructions.txt` lists every mnemonic the sc1 compiler is allowed to emit. When adding a new synthesis, update this file if new pseudo-mnemonics appear in `-S` output.
+**ISA compliance test files** (`tests/sc1/tests/`):
 
-### Behavioral tests (`behav_*.c` tests — rvsc1 only)
+| File | Operations exercised |
+|------|---------------------|
+| `sc1_add.c` | ADD and ADDI (native, regression) |
+| `sc1_andi.c` | ANDI (immediate AND) |
+| `sc1_branch.c` | BNE, BLT, BGE, BLTU, BGEU |
+| `sc1_call.c` | Function call (JAL synthesis) |
+| `sc1_lb.c` | LB (signed byte load) |
+| `sc1_lbu.c` | LBU (unsigned byte load) |
+| `sc1_lh.c` | LH (signed halfword load) |
+| `sc1_lhu.c` | LHU (unsigned halfword load) |
+| `sc1_loop.c` | Loop with synthesized branch |
+| `sc1_not.c` | Bitwise NOT (`~`) |
+| `sc1_ori.c` | ORI (immediate OR) |
+| `sc1_sb.c` | SB (byte store) |
+| `sc1_sh.c` | SH (halfword store) |
+| `sc1_shift.c` | SLL, SRL, SRA with constant counts |
+| `sc1_sll_var.c` | SLL with variable shift count |
+| `sc1_slt.c` | SLT and SLTU |
+| `sc1_sra.c` | SRA with variable shift count |
+| `sc1_srl.c` | SRL with variable shift count |
+| `sc1_xor.c` | XOR register and immediate |
 
-Each `behav_*.c` program is compiled by both `rvsc1-unknown-elf-gcc -O1` and the reference compiler `riscv32-none-elf-gcc -march=rv32i -O1`, then linked with `startup32.S` (bare-metal HTIF stub) and `link32.ld` and executed on Spike with `--isa=rv32i`. The test passes if both binaries produce the same exit code. Test programs return 0 on success and a distinct nonzero code per failing assertion.
+sc0 has its own ISA tests in `tests/sc0/tests/` (`sc0_arith.c`, `sc0_branch.c`, `sc0_lb.c`, `sc0_lh.c`, `sc0_logic.c`, `sc0_not.c`, `sc0_sb.c`, `sc0_shift.c`, `sc0_sra.c`, `sc0_srl.c`).
+
+### Behavioral tests (`behav_*.c` — rvsc1 only)
+
+Each `behav_*.c` program is compiled by both `rvsc1-unknown-elf-gcc -O1` and the reference compiler `riscv32-none-elf-gcc -march=rv32i -O1`, then linked with `startup32.S` (bare-metal HTIF stub) and `link32.ld` and executed on Spike with `--isa=rv32i`. The test passes if both binaries produce the same exit code.
+
+```sh
+cd tests/sc1 && just behav
+```
+
+**Behavioral test files** (`tests/sc1/tests/`, grouped by operation category):
+
+| File | Operations exercised |
+|------|---------------------|
+| `behav_branch.c` | BLT, BGE, BLTU, BGEU |
+| `behav_call.c` | Function call and return |
+| `behav_logic.c` | NOT, XOR, ANDI, ORI |
+| `behav_mem.c` | LB, LBU, LH, LHU, SB, SH |
+| `behav_shift.c` | SLL, SRL, SRA (constant and variable counts) |
+| `behav_slt.c` | SLT, SLTU |
 
 rvsc0 behavioral tests cannot use the HTIF startup (which calls `main` via `jalr`). Instead rvsc0 test programs write the result directly to the `tohost` address via `sw` and spin with `beq x0, x0, .`.
 
 For quick manual checks:
 
 ```sh
-export PATH=/home/salust/gcc/scw/sc1/build/install/bin:$PATH
+export PATH=/home/salust/p/scgcc/tests/sc1/build/install/bin:$PATH
 
 # Emit assembly and inspect
-rvsc1-unknown-elf-gcc -S -O1 scw/test/sc1_shift.c -o /tmp/out.s
+rvsc1-unknown-elf-gcc -S -O1 tests/sc1/tests/sc1_shift.c -o /tmp/out.s
 
 # Verify absence of a native instruction
-rvsc1-unknown-elf-gcc -S -O1 scw/test/sc1_srl.c -o - \
+rvsc1-unknown-elf-gcc -S -O1 tests/sc1/tests/sc1_srl.c -o - \
   | grep -E '^\s+srl' && echo FAIL || echo PASS
 ```
 
 ## Document
 
-`main.typ` is a Typst academic document (TCC at USP/Poli) — GCC 17.0.0 backend for educational RISC-V processors. Compile with:
+`main.typ` is a Typst academic document (TCC at USP/Poli):
+
+- **Title**: GCC target for educational RISC-V processor
+- **Author**: Guilherme Stabach Salustiano
+- **Advisor**: Bruno de Carvalho Albertini
+- **Dept**: Departamento de Engenharia de Computação e Sistemas Digitais (PCS) — Escola Politécnica, USP
+- **Year**: 2026
+
+Compile with:
 
 ```sh
 typst compile main.typ
@@ -96,10 +154,10 @@ typst compile main.typ
 
 Chapter structure:
 1. Introduction — motivation (PCS3225 course at USP), objectives, rationale
-2. Related Work
+2. Related Work — instruction synthesis in embedded compilers, pedagogical ISA tools (Venus, RARS, MARS, BRISC-V)
 3. Conceptual Background — RISC-V ISA, single-cycle processor, C ABI, GCC architecture
 4. Development Method — study, requirements, synthesis derivation cycle, validation approach
-5. Requirements Specification — allowed instruction sets per target, correctness requirements
+5. Requirements Specification — allowed instruction sets per target, correctness requirements (ISA compliance + behavioral equivalence)
 6. Development — synthesis derivations (proofs + assembly), GCC implementation, known limitations
 7. Results — ISA compliance tests, Spike behavioral differential tests, program size/performance data
 8. Conclusion
@@ -110,10 +168,10 @@ The custom targets reuse the upstream RISC-V backend with three layers of config
 
 ### 1. Target triple registration
 
-- `gcc/config/config.sub` — normalises `rvscN-*` triples (pattern match, no CPU name needed).
-- `gcc/config.gcc` — maps `rvscN-*-elf*` to `cpu_type=riscv`; sets default `--with-arch` and `--with-abi` per target; appends `riscv/rvscN.h` to `tm_file`.
+- `gcc/gcc/config/config.sub` — normalises `rvscN-*` triples (pattern match, no CPU name needed).
+- `gcc/gcc/config/config.gcc` — maps `rvscN-*-elf*` to `cpu_type=riscv`; sets default `--with-arch` and `--with-abi` per target; appends `riscv/rvscN.h` to `tm_file`.
 
-### 2. Per-target header (`gcc/config/riscv/rvscN.h`)
+### 2. Per-target header (`gcc/gcc/config/riscv/rvscN.h`)
 
 Each header overrides `CC1_SPEC` to inject `-mno-*` flags automatically so users never need to pass them manually:
 
@@ -123,7 +181,9 @@ Each header overrides `CC1_SPEC` to inject `-mno-*` flags automatically so users
   " %{!mslt:-mno-slt} ..."
 ```
 
-### 3. Machine Description (`gcc/config/riscv/riscv.md`)
+rvsc0 has no header; it relies on sc1-level flag injection (no calls possible anyway).
+
+### 3. Machine Description (`gcc/gcc/config/riscv/riscv.md`)
 
 The core of all instruction synthesis. Key patterns:
 
@@ -151,7 +211,25 @@ The core of all instruction synthesis. Key patterns:
 - **`cstore<GPR:mode>4` expand** — when `TARGET_SLT && !TARGET_SLTI && CONST_INT_P(operands[3])`: calls `force_reg` to load the immediate into a register before `riscv_expand_int_scc`, preventing `slti`/`sltiu` emission. When `!TARGET_SLT && SImode`: synthesizes all ordered comparisons (LT, LTU, GE, GEU, GT, GTU, LE, LEU) before calling `riscv_expand_int_scc`. GT/LE/GTU/LEU are reduced to LT/LTU by swapping operands; GE/GEU/LE/LEU invert the result using `sub rd, one, result` (avoids XOR→zero_extract→ashift split that fails with `!TARGET_SHIFT`). `slt` synthesis: `sub diff, a, b; xor t1, a, b; xor t2, a, diff; and t1, t1, t2; xor diff, diff, t1; lshr rd, diff, 31`. `sltu` synthesis: `sub diff, a, b; not t1, a; and t2, t1, b; xor t3, a, b; not t3, t3; and t3, t3, diff; or t2, t2, t3; lshr rd, t2, 31`.
 - **`@cbranch<mode>4` expand** — when `!TARGET_SLT && SImode && code ≠ EQ/NE`: emits the same slt/sltu synthesis into a temp register, then calls `riscv_expand_conditional_branch` with `NE` (for LT/LTU/GT/GTU) or `EQ` (for GE/GEU/LE/LEU) so the branch tests `tmp != 0` or `tmp == 0`. This intercepts before `*branch<mode>` so its raw `"slt\t..."` asm templates are never reached with `!TARGET_SLT`.
 
-### 4. Target options (`gcc/config/riscv/riscv.opt`)
+### 4. Synthesis cost summary
+
+| Operation | Instructions (worst case) | Extra registers | Applies to |
+|-----------|--------------------------|-----------------|------------|
+| NOT | 2 | 0 | rvsc0, rvsc1 |
+| XOR | 6 (NOT expanded) | 1 | rvsc0, rvsc1 |
+| SLL | 3 + 4b (max 127 at b=31) | 1 | rvsc0, rvsc1 |
+| SRL | ~170 | 5 | rvsc0, rvsc1 |
+| SRA | ~200 | 6 | rvsc0, rvsc1 |
+| SLT | ~60 | 3 | rvsc0, rvsc1 |
+| SLTU | ~70 | 4 | rvsc0, rvsc1 |
+| BNE | 3 | 1 | rvsc0, rvsc1 |
+| LB, LBU | ~70–80 | 2 | rvsc0, rvsc1 |
+| LH, LHU | ~70–80 | 2 | rvsc0, rvsc1 |
+| SB | ~100 (+ 1 lw + 1 sw) | 3 | rvsc0, rvsc1 |
+| SH | ~105 (+ 1 lw + 1 sw) | 3 | rvsc0, rvsc1 |
+| JAL | 5 per call site | 1 | rvsc1 |
+
+### 5. Target options (`gcc/gcc/config/riscv/riscv.opt`)
 
 Custom boolean flags added for this project:
 
@@ -183,14 +261,14 @@ All have `Init(1)` (enabled by default); the `rvscN.h` header disables the appro
 
 ## Adding a new sc1 synthesis
 
-1. **Add the flag** to `gcc/config/riscv/riscv.opt`:
+1. **Add the flag** to `gcc/gcc/config/riscv/riscv.opt`:
    ```
    mfoo
    Target Var(TARGET_FOO) Init(1)
    Enable foo instruction (-mno-foo synthesizes via ...).
    ```
 
-2. **Disable by default** in `gcc/config/riscv/rvsc1.h` `CC1_SPEC`:
+2. **Disable by default** in `gcc/gcc/config/riscv/rvsc1.h` `CC1_SPEC`:
    ```c
    #define CC1_SPEC "... %{!mfoo:-mno-foo}"
    ```
@@ -199,11 +277,11 @@ All have `Init(1)` (enabled by default); the `rvscN.h` header disables the appro
 
 4. **Gate the native insn** — add `&& TARGET_FOO` to the condition string of the corresponding `define_insn` so it is never selected when synthesis is active.
 
-5. **Write a test** in `scw/test/sc1_foo.c` and add any new pseudo-mnemonics to `scw/sc1/instructions.txt`.
+5. **Write a test** in `tests/sc1/tests/sc1_foo.c`.
 
 6. **Rebuild and test**:
    ```sh
-   cd scw/sc1 && just build install test
+   cd tests/sc1 && just build install test
    ```
 
 ### Emit helpers in riscv.md expand bodies

@@ -4,18 +4,21 @@ import "../common.just"
 
 default: test
 
+# Configure + build + install binutils then gcc (first-time setup)
+setup: configure-binutils build-binutils install-binutils configure build install
+
 # ISA compliance: compile → assemble → disassemble → check allowlist
 test:
-    python3 main.py
+    PATH="{{prefix}}/bin:$PATH" python3 main.py
 
 # Run a single source file through ISA compliance
 test-one file:
-    python3 main.py {{file}}
+    PATH="{{prefix}}/bin:$PATH" python3 main.py {{file}}
 
 # Behavioral differential: compile with sc1 + reference, run both on Spike, compare exit codes
 behav:
-    python3 behav.py
+    PATH="{{prefix}}/bin:$PATH" python3 behav.py
 
 # Run a single behavioral test
 behav-one file:
-    python3 behav.py {{file}}
+    PATH="{{prefix}}/bin:$PATH" python3 behav.py {{file}}

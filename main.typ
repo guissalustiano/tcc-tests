@@ -626,6 +626,87 @@ The upstream GNU binutils cross toolchain is used without modification as the as
 
 Spike is the official RISC-V ISA reference simulator @spike. It implements the full RV64IMAFD instruction set, making it suitable as the behavioral oracle: a binary compiled by `rvsc1-unknown-elf-gcc` contains only valid RV32I instructions (the synthesis sequences are themselves valid RV32I), so Spike can execute it and report the correct result. Spike is invoked with `--isa=rv32i` for rvsc0--rvsc3 tests, and with `--log-commits` to count retired instructions for performance measurements.
 
+== Toolchain Installation
+
+=== Repository Setup
+
+The GCC backend modifications live in a fork of the upstream GCC repository:
+
+```sh
+git clone https://github.com/guissalustiano/gcc-hannersy-paterson gcc
+```
+
+The GNU Binutils source is cloned separately and is required for targets rvsc2 and above, where GCC must invoke the target assembler during a single compilation step:
+
+```sh
+git clone https://sourceware.org/git/binutils-gdb.git binutils-gdb
+```
+
+Both repositories should sit side by side in the same parent directory. The build directories and installed toolchains are placed inside a per-target subdirectory:
+
+```
+project/
+├── gcc/              ← GCC fork (source, never built in-tree)
+├── binutils-gdb/     ← binutils source
+└── targets/
+    └── rvsc2/
+        ├── build-binutils/   ← binutils out-of-tree build
+        ├── build/            ← GCC out-of-tree build
+        └── install/          ← installed toolchain (bin/, lib/, ...)
+```
+
+=== Building Binutils
+
+Binutils must be built and installed before GCC so that GCC's configure step can detect the target assembler and linker. Only the assembler (`gas`) and linker (`ld`) components are needed; the higher-level binutils utilities (`nm`, `objdump`, `strip`, etc.) are provided by the pre-existing `riscv32-none-elf` system toolchain and do not need to be rebuilt.
+
+```sh
+mkdir -p targets/rvsc2/build-binutils
+cd targets/rvsc2/build-binutils
+
+../../binutils-gdb/configure \
+    --target=rvsc2-unknown-elf \
+    --prefix=$(pwd)/../install \
+    --disable-nls \
+    --disable-gdb \
+    --disable-binutils   # skip nm/objdump/strip/etc.; build only gas + ld
+
+make -j$(nproc)
+make install
+```
+
+After this step the install prefix contains `rvsc2-unknown-elf-as` and `rvsc2-unknown-elf-ld`.
+
+=== Building GCC
+
+With the assembler and linker installed, GCC can be configured and built. The three `--disable-*` flags prevent GCC from attempting to rebuild its own copies of the binutils components from the source tree (the GCC repository bundles a copy of binutils), which avoids duplicate build failures and unnecessary compilation time.
+
+```sh
+mkdir -p targets/rvsc2/build
+cd targets/rvsc2/build
+
+PATH="$(pwd)/../install/bin:$PATH" \
+../../gcc/configure \
+    --target=rvsc2-unknown-elf \
+    --prefix=$(pwd)/../install \
+    --enable-languages=c \
+    --with-newlib \
+    --disable-binutils \   # do not rebuild binutils utilities from gcc tree
+    --disable-ld \         # do not rebuild linker from gcc tree
+    --disable-gas          # do not rebuild assembler from gcc tree
+
+make all-gcc -j$(nproc)
+make install-gcc
+```
+
+Prepending the install prefix to `PATH` before configure allows the configure script to detect the pre-installed `rvsc2-unknown-elf-as` and `rvsc2-unknown-elf-ld` binaries, preventing it from scheduling them for in-tree compilation.
+
+After installation the toolchain is fully self-contained under `targets/rvsc2/install/bin/`. Compiling a C program to a RISC-V object file requires only:
+
+```sh
+PATH="targets/rvsc2/install/bin:$PATH" \
+rvsc2-unknown-elf-gcc -O2 -ffreestanding -c program.c -o program.o
+```
+
 == Synthesis Derivations <sc1-synthesis>
 
 *Assembly notation.* In the listings below, `rd`, `rs1`, and `rs2` denote the canonical destination and source registers. Registers `t0`–`t5` are temporaries chosen for readability. In the actual GCC machine description, all temporaries are allocated as pseudo-registers via `gen_reg_rtx(SImode)`; the register allocator maps them to physical registers, resolving aliasing conflicts automatically. The bracket notation `[op ...]` marks an instruction that is itself synthesized — its expansion is defined in the subsection that covers that operation.

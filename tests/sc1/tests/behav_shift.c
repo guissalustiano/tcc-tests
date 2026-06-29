@@ -1,4 +1,4 @@
-int results[6];
+int results[7];
 
 int main(void) {
     int x = 0x12345678;
@@ -10,5 +10,6 @@ int main(void) {
     int n = 5;
     results[4] = x << n;
     results[5] = (unsigned)x >> n;
+    results[6] = y >> n;          /* variable-count SRA */
     return results[0] ^ results[3];
 }

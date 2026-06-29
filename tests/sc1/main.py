@@ -18,7 +18,7 @@ SCRIPT_DIR = Path(__file__).parent
 # ── target config ──────────────────────────────────────────────────────────
 COMPILER  = "rvsc1-unknown-elf-gcc"
 OBJDUMP   = "riscv32-none-elf-objdump"
-TEST_GLOB = "tests/*.c"
+TEST_GLOB = "tests/isa/*.c"
 OPT_LEVELS = ["-O0", "-O1", "-O2", "-O3", "-Os"]
 
 # sc0 set extended with lui and jalr — minimum for the C calling convention.

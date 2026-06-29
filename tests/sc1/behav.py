@@ -37,7 +37,7 @@ ISA          = "rv32i"
 BINUTILS     = "riscv32-none-elf"
 STARTUP      = SCRIPT_DIR / "startup32.S"
 LD_SCRIPT    = SCRIPT_DIR / "link32.ld"
-TEST_GLOB    = "tests/behav_*.c"
+TEST_GLOB    = "tests/behav/*.c"
 # ────────────────────────────────────────────────────────────────────────────
 
 

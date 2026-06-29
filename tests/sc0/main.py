@@ -20,7 +20,7 @@ COMPILER  = "rvsc0-unknown-elf-gcc"
 BITS      = 32
 MARCH     = f"rv{BITS}i"
 BINUTILS  = f"riscv{BITS}-none-elf"
-TEST_GLOB = "tests/*.c"
+TEST_GLOB = "tests/isa/*.c"
 
 # Chapter 4.4 Hennessy-Patterson subset.
 # After -M no-aliases, no pseudos can hide a forbidden opcode.

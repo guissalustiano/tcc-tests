@@ -61,6 +61,17 @@ def compile_to_obj(compiler: str, src: Path, opt: str, cflags: list[str]) -> Pat
     return o
 
 
+def try_compile_to_obj(compiler: str, src: Path, opt: str, cflags: list[str]) -> Path | None:
+    """Like compile_to_obj but returns None on failure instead of exiting."""
+    o = Path(tempfile.mktemp(suffix=".o"))
+    try:
+        _run(compiler, "-c", opt, "-ffreestanding", *cflags, "-o", str(o), str(src))
+        return o
+    except subprocess.CalledProcessError:
+        o.unlink(missing_ok=True)
+        return None
+
+
 def validate_source_direct(
     compiler: str,
     objdump: str,
@@ -115,9 +126,30 @@ def assemble_file(assembler: str, march: str, src: Path, out: Path) -> None:
         sys.exit(f"assemble error ({src.name}):\n{e.stderr.strip()}")
 
 
-def link_elf(linker: str, ld_script: Path, objects: list[Path], out: Path) -> None:
+def compile_c(compiler: str, src: Path, cflags: list[str], out: Path) -> None:
+    """Compile a C source file to an object (no -ffreestanding)."""
     try:
-        _run(linker, "-T", str(ld_script), *[str(o) for o in objects], "-o", str(out))
+        _run(compiler, "-c", *cflags, "-o", str(out), str(src))
+    except subprocess.CalledProcessError as e:
+        sys.exit(f"compile error ({src.name}):\n{e.stderr.strip()}")
+
+
+def link_elf(
+    linker: str,
+    ld_script: Path,
+    objects: list[Path],
+    out: Path,
+    extra_flags: list[str] = (),
+    libs: list[str] = (),
+) -> None:
+    try:
+        _run(
+            linker, *extra_flags,
+            "-T", str(ld_script),
+            *[str(o) for o in objects],
+            *libs,
+            "-o", str(out),
+        )
     except subprocess.CalledProcessError as e:
         sys.exit(f"link error:\n{e.stderr.strip()}")
 

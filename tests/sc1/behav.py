@@ -2,16 +2,14 @@
 """Behavioral differential test for rvsc1.
 
 For each behav_*.c:
-  1. Compile with rvsc1-unknown-elf-gcc  →  assemble  →  link with startup32  →  spike
-  2. Compile with riscv32-none-elf-gcc   →  assemble  →  link with startup32  →  spike
+  1. Compile with rvsc1-unknown-elf-gcc  →  assemble  →  link with startup + syscalls  →  spike
+  2. Compile with riscv32-none-elf-gcc   →  assemble  →  link with startup + syscalls  →  spike
   PASS if both spike runs produce identical stdout (machine-state dump).
 
-startup32.S dumps the full 32-bit return value and data+bss contents to HTIF
-console before exiting, so any baremetal C program can serve as a test without
-needing assertion logic.
-
-startup32.S is always assembled with the reference toolchain (it uses full rv32i
-instructions like bgeu, srl, andi, call that sc1 does not emit natively).
+startup.S sets the stack and calls main → _exit.
+syscalls.c implements _exit (dumps a0 and data+bss as hex via HTIF) and the
+minimal newlib syscall stubs (_write, _read, etc.).
+Both are compiled/assembled with the reference toolchain so they run on full rv32i.
 """
 
 import argparse
@@ -22,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from common import (
-    find_tool, compile_to_asm, assemble, assemble_file,
+    find_tool, compile_to_asm, compile_c, assemble, assemble_file,
     link_elf, run_spike_with_stdout, SpikeTimeout,
 )
 
@@ -35,8 +33,10 @@ REF_CFLAGS   = ["-march=rv32i", "-mabi=ilp32"]
 MARCH        = "rv32i"
 ISA          = "rv32i"
 BINUTILS     = "riscv32-none-elf"
-STARTUP      = SCRIPT_DIR / "startup32.S"
+STARTUP      = SCRIPT_DIR / "startup.S"
+SYSCALLS     = SCRIPT_DIR / "syscalls.c"
 LD_SCRIPT    = SCRIPT_DIR / "link32.ld"
+LIBS         = []
 TEST_GLOB    = "tests/behav/*.c"
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -66,9 +66,12 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as _tmp:
         tmp = Path(_tmp)
 
-        # startup32.S assembled once and shared across all tests
-        startup_obj = tmp / "startup32.o"
+        # support objects built once with reference compiler, shared across all tests
+        startup_obj  = tmp / "startup.o"
+        syscalls_obj = tmp / "syscalls.o"
         assemble_file(assembler, MARCH, STARTUP, startup_obj)
+        compile_c(ref_gcc, SYSCALLS, REF_CFLAGS + ["-ffreestanding"], syscalls_obj)
+        support = [startup_obj, syscalls_obj]
 
         for src in map(Path, sources):
             print(f"  {src.name} ...", end=" ", flush=True)
@@ -79,7 +82,7 @@ def main() -> None:
             sc1_asm = compile_to_asm(sc1_gcc, src, [])
             sc1_tmp = assemble(assembler, MARCH, sc1_asm)
             sc1_tmp.rename(sc1_obj)
-            link_elf(linker, LD_SCRIPT, [startup_obj, sc1_obj], sc1_elf)
+            link_elf(linker, LD_SCRIPT, support + [sc1_obj], sc1_elf, libs=LIBS)
 
             # reference build
             ref_obj = tmp / f"{src.stem}_ref.o"
@@ -87,7 +90,7 @@ def main() -> None:
             ref_asm = compile_to_asm(ref_gcc, src, REF_CFLAGS)
             ref_tmp = assemble(assembler, MARCH, ref_asm)
             ref_tmp.rename(ref_obj)
-            link_elf(linker, LD_SCRIPT, [startup_obj, ref_obj], ref_elf)
+            link_elf(linker, LD_SCRIPT, support + [ref_obj], ref_elf, libs=LIBS)
 
             # run both and compare machine-state dumps
             try:

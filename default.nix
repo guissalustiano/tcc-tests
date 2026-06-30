@@ -1,5 +1,11 @@
 { pkgs ? import <nixpkgs> {} }:
 
+let
+  # Expose riscv32-none-elf-gcc for behavioral tests without adding it to
+  # nativeBuildInputs — that would override CC/CXX and break GCC configure.
+  riscv32GCC = pkgs.pkgsCross.riscv32-embedded.buildPackages.gcc;
+in
+
 pkgs.mkShell {
   name = "gcc-rvsc";
   hardeningDisable = [ "format" ];
@@ -58,5 +64,6 @@ pkgs.mkShell {
     echo "Build dirs: /home/salust/p/build-rv-sc{0..7}"
     echo "Source dir: /home/salust/p/gcc"
     export TYPST_FONT_PATHS="${pkgs.liberation_ttf}/share/fonts/truetype"
+    export PATH="${riscv32GCC}/bin:$PATH"
   '';
 }

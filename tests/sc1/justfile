@@ -4,9 +4,6 @@ import "../common.just"
 
 default: test
 
-# Configure + build + install binutils then gcc (first-time setup)
-setup: configure-binutils build-binutils install-binutils configure build install
-
 # ISA compliance: compile → assemble → disassemble → check allowlist
 test:
     PATH="{{prefix}}/bin:$PATH" python3 main.py

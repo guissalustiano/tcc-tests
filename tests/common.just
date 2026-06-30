@@ -4,6 +4,9 @@ build_dir          := justfile_directory() + "/build"
 binutils_build_dir := justfile_directory() + "/build-binutils"
 prefix             := justfile_directory() + "/build/install"
 
+# Full first-time setup: binutils → gcc → newlib → libgcc
+setup: configure-binutils build-binutils install-binutils configure build install configure-newlib build-newlib install-newlib build-libgcc install-libgcc
+
 configure-binutils:
     mkdir -p {{binutils_build_dir}}
     cd {{binutils_build_dir}} && {{binutils_src}}/configure \

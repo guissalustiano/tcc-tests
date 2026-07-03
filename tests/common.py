@@ -61,13 +61,35 @@ def compile_to_obj(compiler: str, src: Path, opt: str, cflags: list[str]) -> Pat
     return o
 
 
-def try_compile_to_obj(compiler: str, src: Path, opt: str, cflags: list[str]) -> Path | None:
-    """Like compile_to_obj but returns None on failure instead of exiting."""
+def try_compile_to_obj(
+    compiler: str,
+    src: Path,
+    opt: str,
+    cflags: list[str],
+    timeout: int = 120,
+) -> Path | None:
+    """Like compile_to_obj but returns None on failure or timeout instead of exiting."""
+    import os
+    import signal
     o = Path(tempfile.mktemp(suffix=".o"))
     try:
-        _run(compiler, "-c", opt, "-ffreestanding", *cflags, "-o", str(o), str(src))
+        proc = subprocess.Popen(
+            [compiler, "-c", opt, "-ffreestanding", *cflags, "-o", str(o), str(src)],
+            capture_output=True, text=True,
+            start_new_session=True,
+        )
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+            o.unlink(missing_ok=True)
+            return None
+        if proc.returncode != 0:
+            o.unlink(missing_ok=True)
+            return None
         return o
-    except subprocess.CalledProcessError:
+    except Exception:
         o.unlink(missing_ok=True)
         return None
 

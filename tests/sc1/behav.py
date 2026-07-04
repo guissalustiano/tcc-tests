@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
-"""Behavioral differential test for rvsc1.
+"""Behavioral self-test for rvsc1.
 
 For each behav_*.c:
   1. Compile with rvsc1-unknown-elf-gcc  →  assemble  →  link with startup + syscalls  →  spike
-  2. Compile with riscv32-none-elf-gcc   →  assemble  →  link with startup + syscalls  →  spike
-  PASS if both spike runs produce identical stdout (machine-state dump).
+  PASS if spike exits with code 0 (tests call exit(0) on success, abort()/exit(1) on failure).
 
 startup.S sets the stack and calls main → _exit.
-syscalls.c implements _exit (dumps a0 and data+bss as hex via HTIF) and the
-minimal newlib syscall stubs (_write, _read, etc.).
+syscalls.c implements _exit via HTIF (exit code encoded in tohost).
 Both are compiled/assembled with the reference toolchain so they run on full rv32i.
 """
 
 import argparse
-import difflib
 import sys
 import tempfile
 from pathlib import Path
@@ -21,15 +18,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from common import (
     find_tool, compile_to_asm, compile_c, assemble, assemble_file,
-    link_elf, run_spike_with_stdout, SpikeTimeout,
+    link_elf, run_spike, SpikeTimeout,
 )
 
 SCRIPT_DIR = Path(__file__).parent
 
 # ── config ──────────────────────────────────────────────────────────────────
 SC1_COMPILER = "rvsc1-unknown-elf-gcc"
-REF_COMPILER = "riscv32-none-elf-gcc"
-REF_CFLAGS   = ["-march=rv32i", "-mabi=ilp32"]
 MARCH        = "rv32i"
 ISA          = "rv32i"
 BINUTILS     = "riscv32-none-elf"
@@ -43,7 +38,7 @@ TEST_GLOB    = "tests/behav/*.c"
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Behavioral differential tests: rvsc1 vs reference rv32i on Spike"
+        description="Behavioral self-tests: rvsc1 on Spike (exit 0 = pass)"
     )
     parser.add_argument(
         "sources", nargs="*", type=Path,
@@ -56,7 +51,7 @@ def main() -> None:
         sys.exit(f"error: no test sources found (looked for {SCRIPT_DIR / TEST_GLOB})")
 
     sc1_gcc   = find_tool(SC1_COMPILER)
-    ref_gcc   = find_tool(REF_COMPILER)
+    ref_gcc   = find_tool(f"{BINUTILS}-gcc")
     assembler = find_tool(f"{BINUTILS}-as")
     linker    = find_tool(f"{BINUTILS}-ld")
     find_tool("spike")
@@ -70,13 +65,12 @@ def main() -> None:
         startup_obj  = tmp / "startup.o"
         syscalls_obj = tmp / "syscalls.o"
         assemble_file(assembler, MARCH, STARTUP, startup_obj)
-        compile_c(ref_gcc, SYSCALLS, REF_CFLAGS + ["-ffreestanding"], syscalls_obj)
+        compile_c(ref_gcc, SYSCALLS, [f"-march={MARCH}", "-mabi=ilp32", "-ffreestanding"], syscalls_obj)
         support = [startup_obj, syscalls_obj]
 
         for src in map(Path, sources):
             print(f"  {src.name} ...", end=" ", flush=True)
 
-            # sc1 build
             sc1_obj = tmp / f"{src.stem}_sc1.o"
             sc1_elf = tmp / f"{src.stem}_sc1.elf"
             sc1_asm = compile_to_asm(sc1_gcc, src, [])
@@ -84,35 +78,18 @@ def main() -> None:
             sc1_tmp.rename(sc1_obj)
             link_elf(linker, LD_SCRIPT, support + [sc1_obj], sc1_elf, libs=LIBS)
 
-            # reference build
-            ref_obj = tmp / f"{src.stem}_ref.o"
-            ref_elf = tmp / f"{src.stem}_ref.elf"
-            ref_asm = compile_to_asm(ref_gcc, src, REF_CFLAGS)
-            ref_tmp = assemble(assembler, MARCH, ref_asm)
-            ref_tmp.rename(ref_obj)
-            link_elf(linker, LD_SCRIPT, support + [ref_obj], ref_elf, libs=LIBS)
-
-            # run both and compare machine-state dumps
             try:
-                sc1_code, sc1_state = run_spike_with_stdout(ISA, sc1_elf)
-                ref_code, ref_state = run_spike_with_stdout(ISA, ref_elf)
+                rc = run_spike(ISA, sc1_elf)
             except SpikeTimeout as e:
-                print(f"FAIL  (spike timeout: {e})")
+                print(f"TIMEOUT  ({e})")
                 failed += 1
                 continue
 
-            if sc1_state == ref_state:
-                print(f"PASS")
+            if rc == 0:
+                print("PASS")
                 passed += 1
             else:
-                print(f"FAIL")
-                diff = difflib.unified_diff(
-                    ref_state.splitlines(keepends=True),
-                    sc1_state.splitlines(keepends=True),
-                    fromfile="ref",
-                    tofile="sc1",
-                )
-                sys.stdout.writelines(diff)
+                print(f"FAIL  (exit {rc})")
                 failed += 1
 
     total = passed + failed

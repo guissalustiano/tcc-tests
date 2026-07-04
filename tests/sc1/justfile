@@ -16,6 +16,10 @@ test-one file:
 torture-isa:
     PATH="{{prefix}}/bin:$PATH" python3 torture_isa.py
 
+# Behavioral: compile torture tests with sc1, run on Spike via pk (exit 0 = pass)
+torture-behav:
+    PATH="{{prefix}}/bin:$PATH" python3 torture_behav.py
+
 # Behavioral differential: compile with sc1 + reference, run both on Spike, compare exit codes
 behav:
     PATH="{{prefix}}/bin:$PATH" python3 behav.py

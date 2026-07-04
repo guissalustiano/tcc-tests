@@ -180,26 +180,14 @@ class SpikeTimeout(Exception):
     pass
 
 
-def run_spike(isa: str, elf: Path, timeout: int = 30) -> int:
+def run_spike(isa: str, elf: Path, timeout: int = 30, pk: str | None = None) -> int:
+    """Run spike and return the exit code. Pass pk= to run under the proxy kernel."""
+    cmd = ["spike", f"--isa={isa}"]
+    if pk:
+        cmd.append(pk)
+    cmd.append(str(elf))
     try:
-        r = subprocess.run(
-            ["spike", f"--isa={isa}", str(elf)],
-            capture_output=True, text=True,
-            timeout=timeout,
-        )
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return r.returncode
-    except subprocess.TimeoutExpired:
-        raise SpikeTimeout(elf.name)
-
-
-def run_spike_with_stdout(isa: str, elf: Path, timeout: int = 30) -> tuple[int, str]:
-    """Run spike and return (returncode, stdout). Raises SpikeTimeout on timeout."""
-    try:
-        r = subprocess.run(
-            ["spike", f"--isa={isa}", str(elf)],
-            capture_output=True, text=True,
-            timeout=timeout,
-        )
-        return r.returncode, r.stdout
     except subprocess.TimeoutExpired:
         raise SpikeTimeout(elf.name)

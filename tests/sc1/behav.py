@@ -1,59 +1,50 @@
 #!/usr/bin/env python3
-"""Behavioral self-test for rvsc1.
+"""Behavioral self-test for rvsc1 using the RISC-V proxy kernel (pk).
 
 For each behav_*.c:
-  1. Compile with rvsc1-unknown-elf-gcc  →  assemble  →  link with startup + syscalls  →  spike
-  PASS if spike exits with code 0 (tests call exit(0) on success, abort()/exit(1) on failure).
+  1. Compile + link with rvsc1-unknown-elf-gcc (crt0 + libsim + libc included)
+  2. Run under: spike --isa=rv32imac_zicsr_zifencei $PK test.elf
+  PASS if spike exits with code 0 (tests call exit(0) on success).
 
-startup.S sets the stack and calls main → _exit.
-syscalls.c implements _exit via HTIF (exit code encoded in tohost).
-Both are compiled/assembled with the reference toolchain so they run on full rv32i.
+pk provides the stack and handles exit() via ecall.
+The sc1 user binary only emits sc1-subset instructions; ISA compliance is
+verified separately by torture_isa.py / main.py.
 """
 
 import argparse
+import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from common import (
-    find_tool, compile_to_asm, compile_c, assemble, assemble_file,
-    link_elf, run_spike, SpikeTimeout,
-)
+from common import find_tool, run_spike, SpikeTimeout
 
-SCRIPT_DIR = Path(__file__).parent
-
-# ── config ──────────────────────────────────────────────────────────────────
+SCRIPT_DIR   = Path(__file__).parent
 SC1_COMPILER = "rvsc1-unknown-elf-gcc"
-MARCH        = "rv32i"
-ISA          = "rv32i"
-BINUTILS     = "riscv32-none-elf"
-STARTUP      = SCRIPT_DIR / "startup.S"
-SYSCALLS     = SCRIPT_DIR / "syscalls.c"
-LD_SCRIPT    = SCRIPT_DIR / "link32.ld"
-LIBS         = []
+ISA          = "rv32imac_zicsr_zifencei"
+LD_SCRIPT    = SCRIPT_DIR / "pk32.ld"
 TEST_GLOB    = "tests/behav/*.c"
-# ────────────────────────────────────────────────────────────────────────────
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Behavioral self-tests: rvsc1 on Spike (exit 0 = pass)"
+        description="Behavioral self-tests: rvsc1 on Spike via pk (exit 0 = pass)"
     )
-    parser.add_argument(
-        "sources", nargs="*", type=Path,
-        help=f"C source files (default: {TEST_GLOB})",
-    )
+    parser.add_argument("sources", nargs="*", type=Path,
+                        help=f"C source files (default: {TEST_GLOB})")
     args = parser.parse_args()
+
+    pk = os.environ.get("PK")
+    if not pk:
+        sys.exit("error: PK environment variable not set (run inside the nix dev shell)")
 
     sources = args.sources or sorted(SCRIPT_DIR.glob(TEST_GLOB))
     if not sources:
         sys.exit(f"error: no test sources found (looked for {SCRIPT_DIR / TEST_GLOB})")
 
-    sc1_gcc   = find_tool(SC1_COMPILER)
-    ref_gcc   = find_tool(f"{BINUTILS}-gcc")
-    assembler = find_tool(f"{BINUTILS}-as")
-    linker    = find_tool(f"{BINUTILS}-ld")
+    sc1_gcc = find_tool(SC1_COMPILER)
     find_tool("spike")
 
     passed = failed = 0
@@ -61,25 +52,23 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as _tmp:
         tmp = Path(_tmp)
 
-        # support objects built once with reference compiler, shared across all tests
-        startup_obj  = tmp / "startup.o"
-        syscalls_obj = tmp / "syscalls.o"
-        assemble_file(assembler, MARCH, STARTUP, startup_obj)
-        compile_c(ref_gcc, SYSCALLS, [f"-march={MARCH}", "-mabi=ilp32", "-ffreestanding"], syscalls_obj)
-        support = [startup_obj, syscalls_obj]
-
         for src in map(Path, sources):
             print(f"  {src.name} ...", end=" ", flush=True)
 
-            sc1_obj = tmp / f"{src.stem}_sc1.o"
-            sc1_elf = tmp / f"{src.stem}_sc1.elf"
-            sc1_asm = compile_to_asm(sc1_gcc, src, [])
-            sc1_tmp = assemble(assembler, MARCH, sc1_asm)
-            sc1_tmp.rename(sc1_obj)
-            link_elf(linker, LD_SCRIPT, support + [sc1_obj], sc1_elf, libs=LIBS)
+            sc1_elf = tmp / f"{src.stem}.elf"
+
+            r = subprocess.run(
+                [sc1_gcc, "-O1", "-T", str(LD_SCRIPT),
+                 str(src), "-lsim", "-o", str(sc1_elf)],
+                capture_output=True, text=True,
+            )
+            if r.returncode != 0:
+                print(f"COMPILE ERROR\n{r.stderr.strip()}")
+                failed += 1
+                continue
 
             try:
-                rc = run_spike(ISA, sc1_elf)
+                rc = run_spike(ISA, sc1_elf, pk=pk)
             except SpikeTimeout as e:
                 print(f"TIMEOUT  ({e})")
                 failed += 1

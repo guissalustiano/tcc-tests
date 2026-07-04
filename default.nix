@@ -4,6 +4,13 @@ let
   # Expose riscv32-none-elf-gcc for behavioral tests without adding it to
   # nativeBuildInputs — that would override CC/CXX and break GCC configure.
   riscv32GCC = pkgs.pkgsCross.riscv32-embedded.buildPackages.gcc;
+
+  # Proxy kernel for Spike: pk is a RISC-V ELF (not a host binary) that Spike
+  # loads as a mini OS.  It uses rv32imafdc internally, so Spike must be invoked
+  # with --isa=rv32imac_zicsr_zifencei (or broader).  User programs compiled
+  # with the sc1 toolchain only emit sc1-subset instructions regardless; ISA
+  # compliance is verified separately by torture_isa.py.
+  pk-rv32 = pkgs.pkgsCross.riscv32-embedded.riscv-pk;
 in
 
 pkgs.mkShell {
@@ -65,5 +72,6 @@ pkgs.mkShell {
     echo "Source dir: /home/salust/p/gcc"
     export TYPST_FONT_PATHS="${pkgs.liberation_ttf}/share/fonts/truetype"
     export PATH="${riscv32GCC}/bin:$PATH"
+    export PK="${pk-rv32}/bin/pk"
   '';
 }

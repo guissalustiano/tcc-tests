@@ -3,7 +3,8 @@
 
 sc0 ISA: lw sw beq add addi sub and or
 No jalr/lui/jal — function calls are impossible.
-Test programs must be single-function noreturn programs using _start.
+Test programs must be single-function noreturn programs using __builtin_unreachable.
+Large constants (lui operands) are synthesized via constant pool: lw rd, %lo(pool)(x0).
 """
 
 import argparse
@@ -11,16 +12,15 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from common import find_tool, validate_source
+from common import find_tool, validate_source_direct
 
 SCRIPT_DIR = Path(__file__).parent
 
 # ── target config ──────────────────────────────────────────────────────────
 COMPILER  = "rvsc0-unknown-elf-gcc"
-BITS      = 32
-MARCH     = f"rv{BITS}i"
-BINUTILS  = f"riscv{BITS}-none-elf"
+OBJDUMP   = "riscv32-none-elf-objdump"
 TEST_GLOB = "tests/isa/*.c"
+OPT_LEVELS = ["-O0", "-O1", "-O2", "-O3", "-Os"]
 
 # Chapter 4.4 Hennessy-Patterson subset.
 # After -M no-aliases, no pseudos can hide a forbidden opcode.
@@ -50,23 +50,24 @@ def main() -> None:
         sys.exit(f"error: no test sources found (looked for {SCRIPT_DIR / TEST_GLOB})")
 
     compiler = find_tool(COMPILER)
-    assembler = find_tool(f"{BINUTILS}-as")
-    objdump   = find_tool(f"{BINUTILS}-objdump")
+    objdump  = find_tool(OBJDUMP)
 
     passed = failed = 0
     for src in map(Path, sources):
-        print(f"  {src.name} ...", end=" ", flush=True)
-        ok, violations = validate_source(
-            compiler, assembler, objdump, MARCH, src, ALLOWED, args.cflags
-        )
-        if ok:
-            print("PASS")
-            passed += 1
-        else:
-            print("FAIL")
-            for v in violations:
-                print(f"    forbidden: {v}")
-            failed += 1
+        print(f"  {src.name}")
+        for opt in OPT_LEVELS:
+            print(f"    {opt} ...", end=" ", flush=True)
+            ok, violations = validate_source_direct(
+                compiler, objdump, src, opt, ALLOWED, args.cflags
+            )
+            if ok:
+                print("PASS")
+                passed += 1
+            else:
+                print("FAIL")
+                for v in violations:
+                    print(f"      forbidden: {v}")
+                failed += 1
 
     total = passed + failed
     print(f"\n{passed}/{total} passed")

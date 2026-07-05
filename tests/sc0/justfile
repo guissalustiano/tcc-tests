@@ -11,3 +11,7 @@ test:
 # Run a single source file through ISA compliance
 test-one file:
     PATH="{{prefix}}/bin:$PATH" python3 main.py {{file}}
+
+# Behavioral smoke tests: compile → Spike HTIF → check exit code
+behav:
+    PATH="{{prefix}}/bin:$PATH" python3 behav.py

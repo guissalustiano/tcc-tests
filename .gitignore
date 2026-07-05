@@ -87,3 +87,10 @@ stamp-*
 
 main.pdf
 /tesis-reference/
+
+# GCC IRA/dump files generated during testing
+*.ira
+*.ira.*
+
+# Claude Code internal files
+.claude/

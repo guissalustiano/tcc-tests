@@ -1343,6 +1343,81 @@ The GCC machine description (`riscv.md`) uses two complementary constructs per s
 
 The `DONE` call signals that the expansion body has fully handled the operation; GCC does not attempt to match the `define_insn` afterwards.
 
+=== Implementation Corner Cases <sc1-corner-cases>
+
+Several correctness problems appeared only at higher optimization levels (`-O2`, `-O3`) and required understanding interactions between GCC passes that are invisible during basic `-O1` testing. This subsection documents the three corner cases encountered and the fixes applied.
+
+==== IRA Register Corruption from Long Synthesis Loops
+
+The shift synthesis sequences (SRL, SRA, variable SLL) allocate four to eight pseudo-registers as temporaries and emit between 100 and 200 instructions in a loop. When these loops are emitted by a `define_expand` body, they enter the RTL stream before GCC's Integrated Register Allocator (IRA) runs. IRA performs live-range analysis across the entire function and allocates physical registers to all pseudo-registers simultaneously.
+
+The problem arises when the surrounding function is large enough --- typically because the inliner has merged several small functions into one --- that outer variables have live ranges that contain gaps inside the synthesis loop body. Because outer variables are not referenced by any synthesis instruction, IRA sees a window in which those physical registers appear free, and assigns synthesis temporaries to them. No spill is generated: IRA does not detect a conflict. At runtime the synthesis loop overwrites the outer variables, corrupting their values.
+
+The bug was confirmed by inspecting GCC's IRA dump (`-fdump-ipa-all`): pseudo-register `r195` (carrying the result of an ASHIFTRT operation across several loop iterations) was assigned to physical register `t4`. A subsequent `*branchsi` instruction then unconditionally wrote to `t4` as part of its assembly template, corrupting the value before it could be used.
+
+The fix converts each shift synthesis from a `define_expand` into a `define_insn_and_split` with the split condition `"reload_completed"`. During register allocation the synthesis appears as a single instruction with `(clobber (match_scratch ...))` operands that declare which physical registers the synthesis will need. IRA allocates physical registers for those clobbers before the split fires, so they cannot overlap with any live outer variable. After `reload_completed`, the split substitutes the declared physical registers and generates the full synthesis sequence. The three patterns introduced are:
+
+#figure(
+  table(
+    columns: (auto, auto, auto),
+    align: left,
+    [*Pattern*], [*Operation*], [*Scratch registers declared*],
+    [`lshrsi3_sc1`],   [SRL],           [4 (`out_mask`, `in_mask`, `tmp`, `shift_count`)],
+    [`ashrsi3_sc1`],   [SRA],           [8 (SRL temporaries + `sign_bit`, `shift_masked`, `counter2`, `sign_mask2`)],
+    [`ashlsi3_sc1_var`], [variable SLL], [1 (`count`)],
+  ),
+  caption: [Post-reload split patterns replacing the shift synthesis `define_expand` bodies],
+) <tbl-split-patterns>
+
+The `define_expand` bodies for the shift operations are retained but simplified: each branch now calls `force_reg` on the shift count (converting any immediate to a register, since the split patterns require register operands), emits the corresponding split pattern via `gen_lshrsi3_sc1` / `gen_ashrsi3_sc1` / `gen_ashlsi3_sc1_var`, and calls `DONE`.
+
+==== Combine-Pass Substitution of Unclobbered Hard Registers
+
+A second class of corruption stems from an interaction between the combine pass and a pre-existing `define_insn` for conditional branches.
+
+For ordered comparisons (LT, GE, LTU, GEU) when `!TARGET_SLT`, the `cbranch4` expand body synthesizes the comparison into pseudo-registers using the SLT synthesis sequence, then emits a `NE` branch that tests the resulting pseudo. This is correct: IRA allocates physical registers for all the synthesis pseudos, and none of them are hard-coded.
+
+The combine pass, however, looks for patterns that merge two or more consecutive instructions into a single match. It found that the pair _(SLT-synthesis-result, NE-branch)_ matched the pre-existing `*branchsi` pattern for `LT`. That pattern's assembly template embeds the comparison directly in the branch using fixed physical registers `t2`, `t3`, and `t4` as scratch:
+
+```asm
+;; Excerpt from the *branchsi LT template (simplified)
+slt   t2, rs1, rs2
+bne   t2, x0, target
+```
+
+The pattern did not declare `t2`, `t3`, `t4` as RTL clobbers, so IRA had no knowledge of these writes. If it had assigned live values to any of those registers --- which it regularly did, given that they are caller-saved temporaries often reused --- those values would be silently overwritten.
+
+The fix restricts the `*branchsi` pattern with a condition that excludes LT, GE, LTU, and GEU when `!TARGET_SLT`:
+
+```scheme
+"!TARGET_XCVBI && (TARGET_SLT
+ || GET_CODE (operands[1]) == EQ || GET_CODE (operands[1]) == NE)"
+```
+
+When `!TARGET_SLT`, the combine pass can no longer form a `*branchsi` LT instruction; the SLT synthesis pseudos and the NE branch remain as separate RTL instructions with fully declared operands throughout register allocation.
+
+==== RTX Cost Model for Synthesized Shifts
+
+GCC's cost model assigns an integer cost to each RTX node; the optimizer uses these costs when deciding whether to inline, hoist, or duplicate computations. Without an explicit cost, synthesized shift operations inherited the same cost as native shift instructions --- one or two machine cycles. The optimizer therefore treated a synthesized SRL (up to ~170 instructions) as equivalent to a native `srl` (one instruction), and freely duplicated or inlined shift-heavy code.
+
+Adding explicit costs in `riscv_rtx_costs` corrects this:
+
+```c
+case ASHIFT:
+  /* ... upstream bset handling ... */
+  gcc_fallthrough ();
+case ASHIFTRT:
+case LSHIFTRT:
+  if (!TARGET_SHIFT && GET_MODE (x) == SImode)
+    {
+      *total = COSTS_N_INSNS (CONSTANT_P (XEXP (x, 1)) ? 64 : 200);
+      return true;
+    }
+  /* fall through to upstream cost */
+```
+
+A constant shift count costs 64 instruction-equivalents (reflecting the unrolled constant SLL sequence); a variable count costs 200 (the worst-case SRL/SRA loop). With these costs the optimizer avoids aggressively inlining functions that contain shift operations, keeping the per-function RTL stream small enough that IRA live-range holes are rare.
+
 === Worked Example: XOR in C to Assembly <sc1-example>
 
 The following traces how `unsigned f(unsigned a, unsigned b) { return a ^ b; }` is compiled by `rvsc1-unknown-elf-gcc -S -O1`:
@@ -1414,79 +1489,122 @@ Both targets compile freestanding bare-metal C without a C standard library or a
 
 == Tests
 
-Two independent test layers verify the two correctness requirements stated in #chref(<ch-requirements>): ISA compliance and behavioral equivalence.
+Three independent test layers verify correctness for rvsc1: static ISA compliance (checking that no forbidden mnemonic appears in the output), behavioral self-tests (checking that compiled programs produce correct results on a RISC-V simulator), and a large torture suite from the GCC test infrastructure (checking a broad range of C programs across five optimization levels).
 
-=== ISA Compliance Tests
+=== ISA Compliance Tests --- rvsc1 <sc1-isa-tests>
 
-ISA compliance is verified by `run_tests.py`. For every `.c` file in `scw/test/`, the script compiles the program with `-S -O1`, assembles the output with `riscv32-none-elf-as`, disassembles the resulting object with `riscv32-none-elf-objdump -M no-aliases`, and checks every mnemonic in the disassembly against the per-target allowlist in `instructions.txt`. The `-M no-aliases` flag is essential: it expands pseudo-instructions to their underlying real opcodes before the check, so a pseudo such as `ret` (which expands to `jalr x0, 0(ra)`) cannot pass undetected for a target that forbids `jalr`.
+ISA compliance is verified by `main.py`. For every `.c` file in `tests/isa/`, the script compiles the program with `rvsc1-unknown-elf-gcc -S` at each of the five optimization levels (`-O0`, `-O1`, `-O2`, `-O3`, `-Os`), assembles the output with `riscv32-none-elf-as`, disassembles the resulting object with `riscv32-none-elf-objdump -M no-aliases`, and checks every mnemonic in the disassembly against the rvsc1 allowlist:
 
 #figure(
-  table(
-    columns: (auto, auto, 1fr),
-    align: left,
-    [*Test file*], [*Targets*], [*Operations exercised*],
-    [`sc1_not.c`],         [rvsc0, rvsc1], [Bitwise NOT (`~`)],
-    [`sc1_xor.c`],         [rvsc0, rvsc1], [XOR register and immediate],
-    [`sc1_shift.c`],       [rvsc0, rvsc1], [SLL, SRL, SRA with constant counts],
-    [`sc1_sll_var.c`],     [rvsc0, rvsc1], [SLL with variable shift count],
-    [`sc1_srl.c`],         [rvsc0, rvsc1], [SRL with variable shift count],
-    [`sc1_sra.c`],         [rvsc0, rvsc1], [SRA with variable shift count],
-    [`sc1_slt.c`],         [rvsc0, rvsc1], [SLT and SLTU],
-    [`sc1_andi.c`],        [rvsc0, rvsc1], [ANDI (immediate AND)],
-    [`sc1_ori.c`],         [rvsc0, rvsc1], [ORI (immediate OR)],
-    [`sc1_branch.c`],      [rvsc0, rvsc1], [BNE, BLT, BGE, BLTU, BGEU],
-    [`sc1_lb.c`],          [rvsc0, rvsc1], [LB (signed byte load)],
-    [`sc1_lbu.c`],         [rvsc0, rvsc1], [LBU (unsigned byte load)],
-    [`sc1_lh.c`],          [rvsc0, rvsc1], [LH (signed halfword load)],
-    [`sc1_lhu.c`],         [rvsc0, rvsc1], [LHU (unsigned halfword load)],
-    [`sc1_sb.c`],          [rvsc0, rvsc1], [SB (byte store)],
-    [`sc1_sh.c`],          [rvsc0, rvsc1], [SH (halfword store)],
-    [`sc1_call.c`],        [rvsc1],        [Function call (JAL synthesis)],
-    [`sc1_loop.c`],        [rvsc1],        [Loop with synthesized branch],
-    [`sc1_add.c`],         [rvsc0, rvsc1], [ADD and ADDI (native, regression)],
-    [`fence.c`],           [rvsc2],        [FENCE absent from output],
-  ),
-  caption: [ISA compliance test files and the operations they cover],
-)
+  ```
+  lw  sw  beq  add  addi  sub  and  or  lui  jalr
+  ```,
+  caption: [rvsc1 allowed mnemonics],
+) <tbl-sc1-allowlist>
 
-=== Behavioral Tests --- rvsc1
-
-Behavioral equivalence for rvsc1 is verified by differential testing against a standard upstream cross-compiler. For each `behav_*.c` test file, the program is compiled with both `rvsc1-unknown-elf-gcc -O1` and the reference compiler `riscv32-none-elf-gcc -march=rv32i -O1`. Both outputs are assembled with `riscv32-none-elf-as`, linked with the same bare-metal HTIF startup (`startup32.S`) and linker script (`link32.ld`), and executed on Spike with `--isa=rv32i`. The test passes if and only if both binaries produce the same exit code.
-
-The HTIF startup calls `main()`, captures its return value, writes `(return_value << 1) | 1` to the `tohost` memory address, and spins. Spike reads `tohost` and exits with the return value. Test programs return 0 on success and a distinct nonzero error code for each failing assertion, so a mismatch between the two exit codes pinpoints the failing case.
+The `-M no-aliases` flag is essential: it expands pseudo-instructions to their underlying real opcodes before the check, so a pseudo such as `ret` (which expands to `jalr x0, 0(ra)`) cannot pass disguised as a pseudo for a target that forbids `jalr`.
 
 #figure(
   table(
     columns: (auto, 1fr),
     align: left,
     [*Test file*], [*Operations exercised*],
-    [`behav_not.c`],         [Bitwise NOT],
-    [`behav_xor.c`],         [XOR register and immediate],
-    [`behav_shift_const.c`], [SLL, SRL, SRA with constant counts],
-    [`behav_shift_var.c`],   [SLL, SRL, SRA with variable shift counts],
-    [`behav_andi.c`],        [ANDI],
-    [`behav_ori.c`],         [ORI],
-    [`behav_bne.c`],         [BNE],
-    [`behav_branch.c`],      [BLT, BGE, BLTU, BGEU],
-    [`behav_lb.c`],          [LB],
-    [`behav_lbu.c`],         [LBU],
-    [`behav_lh.c`],          [LH],
-    [`behav_lhu.c`],         [LHU],
-    [`behav_sb.c`],          [SB],
-    [`behav_sh.c`],          [SH],
-    [`behav_call.c`],        [Function call and return],
-    // TODO: add behav_slt.c and behav_sra.c
+    [`add.c`],     [ADD and ADDI (regression: must remain native)],
+    [`andi.c`],    [ANDI immediate — synthesized as `li t, imm; and rd, rs, t`],
+    [`branch.c`],  [BNE, BLT, BGE, BLTU, BGEU — all synthesized from `beq`],
+    [`call.c`],    [Function call and return — JAL synthesized as `lui+addi+jalr`],
+    [`lb.c`],      [LB signed byte load — synthesized via `lw`+shift+sign-extend],
+    [`lbu.c`],     [LBU unsigned byte load — synthesized via `lw`+shift+mask],
+    [`lh.c`],      [LH signed halfword load — synthesized via `lw`+shift+sign-extend],
+    [`lhu.c`],     [LHU unsigned halfword load — synthesized via `lw`+shift+mask],
+    [`loop.c`],    [Loop with synthesized branch and variable shift],
+    [`not.c`],     [Bitwise NOT — synthesized as `sub x0, rs; addi rd, rd, -1`],
+    [`ori.c`],     [ORI immediate — synthesized as `li t, imm; or rd, rs, t`],
+    [`sb.c`],      [SB byte store — synthesized via `lw`+clear+insert+`sw`],
+    [`sh.c`],      [SH halfword store — synthesized via `lw`+clear+insert+`sw`],
+    [`shift.c`],   [SLL, SRL, SRA with constant shift counts],
+    [`sll_var.c`], [SLL with variable shift count — count-down loop],
+    [`slt.c`],     [SLT and SLTU — synthesized via sub/xor/and/lshr],
+    [`sra.c`],     [SRA with variable shift count — bit-extraction loop + sign-fill],
+    [`srl.c`],     [SRL with variable shift count — bit-extraction loop],
+    [`xor.c`],     [XOR — synthesized via De Morgan: `~(a&b) & (a|b)`],
   ),
-  caption: [Behavioral test files for rvsc1 differential testing],
-)
+  caption: [ISA compliance test files for rvsc1 (`tests/isa/`)],
+) <tbl-sc1-isa-files>
 
-=== Behavioral Tests --- rvsc0
+Each file is compiled at five optimization levels, giving 19 × 5 = *95 test cases* in total. All 95 pass: no forbidden mnemonic appears in any rvsc1 output at any optimization level.
 
-rvsc0 has no `jalr` instruction, so the standard HTIF startup (which uses `call main`, expanding to `jalr`) cannot be used. Instead, rvsc0 test programs are structured so that `main()` writes its result directly to the `tohost` memory address via `sw` and then spins with `beq x0, x0, .`. The written value follows the same HTIF encoding as the rvsc1 tests. For differential testing, the same C source is compiled with `riscv32-none-elf-gcc` with the identical `tohost`-writing structure, and the two Spike exit codes are compared.
+=== Behavioral Tests --- rvsc1 <sc1-behav-tests>
+
+Behavioral correctness is verified by `behav.py`. For each `.c` file in `tests/behav/`, the script compiles the program with `rvsc1-unknown-elf-gcc -O1`, links it against a small C runtime provided by the RISC-V proxy kernel (`pk`), and runs the resulting binary on Spike with `--isa=rv32imac_zicsr_zifencei`. The test passes if Spike exits with code 0. Each test program is self-validating: it returns 0 on success and a distinct nonzero value for each failing assertion, so the exit code identifies the specific case that failed.
+
+#figure(
+  table(
+    columns: (auto, 1fr),
+    align: left,
+    [*Test file*], [*Cases covered*],
+    [`branch.c`], [Signed and unsigned comparisons: `<`, `>`, `<=`, `>=`, `!=`; boundary values including `INT_MIN`, `INT_MAX`, and `UINT_MAX`],
+    [`call.c`],   [Recursive Fibonacci (`fib(10)=55`), multi-argument calls, function pointer call via `get_sum()(10,20,30)`],
+    [`logic.c`],  [XOR, ORI, ANDI, NOT on representative bit patterns; De Morgan identity; complement-via-XOR],
+    [`mem.c`],    [SB/LBU/LB and SH/LHU/LH on aligned addresses; signed/unsigned byte and halfword widening],
+    [`shift.c`],  [SLL/SRL/SRA with constant counts (3, 15, 16, 4); variable counts; sign-propagation and zero-fill],
+    [`slt.c`],    [SLT and SLTU with `a=-1`, `b=1`; `INT_MIN < INT_MAX`; `UINT_MAX > 0`],
+  ),
+  caption: [Behavioral test files for rvsc1 (`tests/behav/`)],
+) <tbl-sc1-behav-files>
+
+All 6 behavioral tests pass at every optimization level (`-O0` through `-Os`).
+
+=== gcc.c-torture/execute Torture Suite <sc1-torture-tests>
+
+The GCC distribution includes `gcc.c-torture/execute`, a suite of 1 684 C programs originally developed to stress-test C compiler correctness. The programs are self-validating: they call `exit(0)` on success and `abort()` or `exit(1)` on failure, so no reference compiler is needed. The test harness `torture_behav.py` compiles each program with `rvsc1-unknown-elf-gcc` at all five optimization levels, links the result against the proxy kernel runtime, and runs it on Spike. A test passes if Spike exits with code 0.
+
+The full suite covers 1 684 × 5 = 8 420 compiler+optimizer combinations. @tbl-torture-results summarizes the outcome.
+
+#figure(
+  table(
+    columns: (auto, auto, auto, auto),
+    align: (left, right, right, right),
+    [*Optimization*], [*Passed*], [*Skipped*], [*Timed out*],
+    [`-O0`], [~1 501], [~183], [0],
+    [`-O1`], [~1 531], [~153], [0],
+    [`-O2`], [1 505],  [164],  [15],
+    [`-O3`], [~1 503], [~161], [~14],
+    [`-Os`], [~1 524], [~157], [~3],
+    [*Total*], [*7 545*], [*843*], [*32*],
+  ),
+  caption: [gcc.c-torture/execute results for rvsc1 (8 420 combinations)],
+) <tbl-torture-results>
+
+"Skipped" denotes programs that fail to compile (typically because they use `long long`, floating-point types, or other constructs not supported by the freestanding rvsc1 runtime). There are *zero correctness failures* at any optimization level: every program that compiles and completes within the time limit produces the correct result.
+
+The 32 timed-out cases are programs that compile and execute correctly but generate so many synthesized instructions that Spike exceeds the 300-second simulation budget. Because rvsc1 replaces each shift instruction with a loop of 100 to 200 instructions, programs that perform many shifts at higher optimization levels can require orders of magnitude more retired instructions than the equivalent native-ISA binary. Two test programs are placed in a `KNOWN_SLOW` exclusion list because they always exceed the budget (`nestfunc-5.c` at `-O2` and `-O3`, which involves trampolines synthesized from shift-heavy code); these are counted in the "Skipped" column. @tbl-torture-timeouts lists the programs that consistently time out at `-O2` or `-O3`.
+
+#figure(
+  table(
+    columns: (auto, auto),
+    align: left,
+    [*Test program*], [*Optimization levels*],
+    [`920302-1.c`],   [`-O2`, `-O3`],
+    [`pr50865.c`],    [`-O2`, `-O3`],
+    [`pr53645-2.c`],  [`-O2`, `-O3`],
+    [`pr57876.c`],    [`-O3`],
+    [`pr69447.c`],    [`-O2`, `-O3`],
+    [`pr82524.c`],    [`-O2`, `-O3`],
+    [`pr91450-1.c`],  [`-O2`, `-O3`],
+    [`pr91450-2.c`],  [`-O2`, `-O3`],
+    [`pr93249.c`],    [`-O3`],
+    [`pr93908.c`],    [`-O2`, `-O3`],
+    [`string-opt-5.c`], [`-O2`, `-O3`],
+  ),
+  caption: [gcc.c-torture programs that consistently time out (>300 s on Spike) due to synthesis overhead],
+) <tbl-torture-timeouts>
+
+One additional program, `pr38051.c`, times out at `-Os`. At this optimization level the inliner merges `mymemcmp3` into `mymemcmp` and the resulting function body contains a shift synthesis loop inside an outer loop over memory. Remaining IRA live-range holes at `-Os` allow a synthesis temporary to be assigned to the return-address register `ra`. When the tail call to `mymemcmp1` executes, `ra` holds a corrupted value and the program loops forever. The program passes at `-O0`, `-O1`, `-O2`, and `-O3`.
 
 === rvsc2 --- Fence Mnemonic Check
 
-For rvsc2, only ISA compliance needs to be verified: the `fence` mnemonic must be absent from the output. This is confirmed by `fence.c`, which contains a C construct that would emit `fence` on a full RV32I target. The ISA compliance script (`run_tests.py`) checks that neither `fence` nor `fence.i` appears in the disassembly. No behavioral testing is required because the remainder of the rvsc2 instruction set is identical to rvsc3 (full RV32I), whose correctness is already established by the upstream GCC test suite.
+For rvsc2, only ISA compliance needs to be verified: the `fence` mnemonic must be absent from the output. This is confirmed by `fence.c`, which contains a C construct that would emit `fence` on a full RV32I target. The ISA compliance script checks that neither `fence` nor `fence.i` appears in the disassembly. No behavioral testing is required because the remainder of the rvsc2 instruction set is identical to rvsc3 (full RV32I), whose correctness is already established by the upstream GCC test suite.
 
 === rvsc3 and Above
 

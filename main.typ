@@ -1489,7 +1489,66 @@ Both targets compile freestanding bare-metal C without a C standard library or a
 
 == Tests
 
-Three independent test layers verify correctness for rvsc1: static ISA compliance (checking that no forbidden mnemonic appears in the output), behavioral self-tests (checking that compiled programs produce correct results on a RISC-V simulator), and a large torture suite from the GCC test infrastructure (checking a broad range of C programs across five optimization levels).
+Two targets are verified in depth: rvsc0 and rvsc1. For rvsc1, three independent test layers are applied: static ISA compliance (checking that no forbidden mnemonic appears in the output), behavioral self-tests (checking that compiled programs produce correct results on a RISC-V simulator), and a large torture suite from the GCC test infrastructure (checking a broad range of C programs across five optimization levels). For rvsc0, the same ISA compliance and behavioral layers are applied; the torture suite is omitted because rvsc0 cannot compile multi-function programs.
+
+=== ISA Compliance Tests --- rvsc0 <sc0-isa-tests>
+
+ISA compliance is verified by `main.py`. For every `.c` file in `tests/isa/`, the script compiles the program with `rvsc0-unknown-elf-gcc -S` at each of the five optimization levels, disassembles the resulting object with `riscv32-none-elf-objdump -M no-aliases`, and checks every mnemonic against the rvsc0 allowlist:
+
+#figure(
+  ```
+  lw  sw  beq  add  addi  sub  and  or
+  ```,
+  caption: [rvsc0 allowed mnemonics],
+) <tbl-sc0-allowlist>
+
+#figure(
+  table(
+    columns: (auto, 1fr),
+    align: left,
+    [*Test file*], [*Operations exercised*],
+    [`arith.c`],  [ADD, ADDI, SUB (regression: must remain native)],
+    [`branch.c`], [BNE, BLT, BGE, BLTU, BGEU — synthesized from `beq` via SLT chains],
+    [`lb.c`],     [LB signed byte load — synthesized via `lw`+shift+sign-extend],
+    [`lh.c`],     [LH signed/unsigned halfword load — synthesized via `lw`+shift+mask],
+    [`logic.c`],  [AND, OR (native); XOR via De Morgan; ANDI/ORI via `li`+register-op],
+    [`lui.c`],    [LUI — synthesized via constant pool: `lw rd, %lo(pool)(x0)`],
+    [`not.c`],    [Bitwise NOT — synthesized as `sub x0, rs; addi rd, rd, -1`],
+    [`sb.c`],     [SB byte store — synthesized via `lw`+clear+insert+`sw`],
+    [`shift.c`],  [SLL, SRL, SRA with constant and variable shift counts],
+    [`slt.c`],    [SLT and SLTU — synthesized via sub/xor/and/lshr chains],
+    [`sra.c`],    [SRA with variable shift count — bit-extraction loop + sign-fill],
+    [`srl.c`],    [SRL with variable shift count — bit-extraction loop],
+  ),
+  caption: [ISA compliance test files for rvsc0 (`tests/isa/`)],
+) <tbl-sc0-isa-files>
+
+Each file is compiled at five optimization levels, giving 12 × 5 = *60 test cases* in total. All 60 pass: no forbidden mnemonic appears in any rvsc0 output at any optimization level.
+
+=== Behavioral Tests --- rvsc0 <sc0-behav-tests>
+
+Behavioral correctness is verified by `behav.py`. Because rvsc0 has no `jalr` instruction, it cannot use the proxy-kernel runtime that rvsc1 uses. Instead, each test program is a single C source file defining `int run_test(void)`, linked against a small bare-metal startup (`entry.S`) that sets up the stack, calls `run_test`, converts the return value to an HTIF exit token, and writes it to the `tohost` address. Spike runs the binary bare-metal (without `pk`) at its default load address of `0x80000000` and exits with the value written to `tohost`. The test passes if Spike exits with code 0.
+
+A key constraint distinguishes rvsc0 behavioral tests from rvsc1: global variables and large integer constants are forbidden. The rvsc0 constant pool is valid only when pool entries resolve to addresses below 2048 (the 12-bit signed offset range of `x0`). At Spike's load address of `0x80000000`, pool entries would be accessed via `lw rd, %lo(pool)(x0)` with a wrapped address, producing incorrect values. All test programs therefore use only stack-allocated `volatile` locals and constants within the SMALL_OPERAND range (−2048 to 2047).
+
+#figure(
+  table(
+    columns: (auto, 1fr),
+    align: left,
+    [*Test file*], [*Cases covered*],
+    [`arith.c`],  [ADD/SUB/ADDI on positive, negative, and zero operands; AND and OR identity and absorption],
+    [`branch.c`], [Signed and unsigned comparisons: `<`, `>`, `<=`, `>=`, `!=`; all synthesized from `beq`+SLT chains],
+    [`logic.c`],  [XOR, ANDI, ORI on representative values; De Morgan identity; complement-via-XOR],
+    [`loop.c`],   [Ascending for-loop (sum 1..10), countdown while-loop (doubling to 256), do-while (repeated addition), nested loops],
+    [`mem.c`],    [SB/LBU/LB on all four byte lanes; SH/LHU/LH on both halfword lanes; signed widening via volatile intermediary],
+    [`not.c`],    [NOT on 0, −1, 1, −128, 127; combined `~&`, `~|`; De Morgan XOR identity],
+    [`shift.c`],  [SLL/SRL/SRA with constant counts (1, 3, 8); variable counts; sign-propagation (SRA) and zero-fill (SRL)],
+    [`slt.c`],    [SLT and SLTU: signed ordering, unsigned ordering, equality; unsigned wrap-around larger than small positive],
+  ),
+  caption: [Behavioral test files for rvsc0 (`tests/behav/`)],
+) <tbl-sc0-behav-files>
+
+All 8 behavioral tests pass.
 
 === ISA Compliance Tests --- rvsc1 <sc1-isa-tests>
 

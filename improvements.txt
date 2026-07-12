@@ -46,9 +46,20 @@ Suggested order (correctness first, then docs, then polish):
     relaxation caveat; unaffected by this change since it only touches
     already-dead code paths).
 
- 6. improvements/06-factor-synthesis-helpers.md
-    Deduplicate slt/sltu synthesis (2 copies), no-LUI 0xFFFF construction
-    (~5 copies), and the two XOR identities into riscv.cc helpers.
+ 6. [done] improvements/06-factor-synthesis-helpers.md
+    Deduplicated slt/sltu synthesis into riscv_emit_slt_synth (cbranch +
+    cstore) and the no-LUI constant-construction idiom into
+    riscv_emit_const_no_lui (9 call sites: zero_extendhi expand + split,
+    extend<SHORT><SUPERQI>, movhi, ashrsi3_sc1 — one more site than the
+    original doc listed). Unified *xorhi3_noxor onto the (a|b)-(a&b)
+    identity used for SImode XOR. Verified as a pure refactor: sc0/sc1
+    generated assembly byte-identical before/after across the full ISA
+    test suites; sc1 95/95 ISA + 30/30 behav, sc0 60/60 ISA + 40/40 behav
+    all pass; sc2 rebuilds clean (no test suite yet). Torture suite:
+    7734/8420 pass, 685 skipped, 1 pre-existing unrelated failure
+    (ashrdi-1.c -O2, same DImode-shift gap noted in item 5, confirmed via
+    git-stash A/B test to predate this refactor). Committed as
+    ada605483e4.
 
  7. improvements/07-rtx-costs-mem-slt.md
     Extend riscv_rtx_costs beyond shifts: byte/half mem ops (~75-100),

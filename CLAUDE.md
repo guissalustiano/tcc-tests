@@ -181,7 +181,7 @@ Each header overrides `CC1_SPEC` to inject `-mno-*` flags automatically so users
   " %{!mslt:-mno-slt} ..."
 ```
 
-rvsc0 has no header; it relies on sc1-level flag injection (no calls possible anyway).
+rvsc0 has its own header (`rvsc0.h`), which injects the same flags as `rvsc1.h` plus `%{!mlui:-mno-lui}` (function calls are still impossible regardless, since `jalr` is absent).
 
 ### 3. Machine Description (`gcc/gcc/config/riscv/riscv.md`)
 
@@ -237,6 +237,7 @@ Custom boolean flags added for this project:
 |------|----------|----------------|
 | `-mfence` | `TARGET_FENCE` | `fence`/`fence.i` expands are no-ops |
 | `-mauipc` | `TARGET_AUIPC` | PC-relative → absolute `lui+lo12`; calls → `lui+jalr` |
+| `-mlui` | `TARGET_LUI` | large constants/symbols → constant pool `lw rd, %lo(pool)(x0)`; `jump`/`indirect_jump`/`tablejump`/calls gated off (rvsc0 only) |
 | `-mshift` | `TARGET_SHIFT` | native `sll`/`srl`/`sra` gated off; synthesis in expand |
 | `-mxor` | `TARGET_XOR` | `xor` → `(a\|b)-(a&b)`; `not`/`xori rd,rs,-1` → `sub+addi` |
 | `-mori` | `TARGET_ORI` | `ori` → `li t, imm; or` |

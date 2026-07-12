@@ -1100,6 +1100,8 @@ This requires that `pool_entry` fits in a 12-bit signed offset from `x0` (addres
 
 *Implementation choice.* Approach 2 (constant pool via `lw`) was selected: it produces a single instruction at each use site and avoids the shift instructions that rvsc0 does not support natively. The constraint it imposes --- every pool entry must reside within the 12-bit signed offset range of `x0`, i.e., below address 2048 --- is met by the rvsc0 linker script, which places `.text` at address 0 and the constant pool immediately after. Programs that fit within the first 2 KB of ROM always satisfy this constraint.
 
+This synthesis is controlled by the `-mno-lui` flag (`TARGET_LUI`, disabled only for rvsc0). Two target hooks in `riscv.cc` force non-`SMALL_OPERAND` constants into the pool instead of allowing them to be materialized with `lui`: `TARGET_LEGITIMATE_CONSTANT_P` (`riscv_legitimate_constant_p`) rejects such constants as directly usable RTL constants, and `TARGET_CANNOT_FORCE_CONST_MEM` (`riscv_cannot_force_const_mem`) permits them to be spilled to the constant pool. `riscv_split_symbol` then addresses the resulting pool entry as `lw rd, %lo(pool_sym)(x0)` rather than the usual `%hi/%lo` pair against a `lui`-materialized base, exploiting the fact that the linker script guarantees `%hi(pool_sym) == 0`.
+
 ==== LB, LBU, LH, LHU <sc1-lb-synthesis>
 
 Since sc1 supports only `lw` (32-bit word loads), every byte or halfword load is synthesized in four steps: align the address to a word boundary, load the word, extract the target unit by shift, and sign-extend or zero-extend.
@@ -1296,6 +1298,7 @@ Each synthesized instruction corresponds to a Boolean flag declared in `gcc/conf
     [*Flag*], [*Macro*], [*Disabled for*],
     [`-mfence`],  [`TARGET_FENCE`],  [rvsc0, rvsc1, rvsc2],
     [`-mauipc`],  [`TARGET_AUIPC`],  [rvsc0, rvsc1],
+    [`-mlui`],    [`TARGET_LUI`],    [rvsc0],
     [`-mshift`],  [`TARGET_SHIFT`],  [rvsc0, rvsc1],
     [`-mxor`],    [`TARGET_XOR`],    [rvsc0, rvsc1],
     [`-mori`],    [`TARGET_ORI`],    [rvsc0, rvsc1],
@@ -1415,7 +1418,7 @@ The fix restricts the `*branchsi` pattern with a condition that excludes LT, GE,
 
 When `!TARGET_SLT`, the combine pass can no longer form a `*branchsi` LT instruction; the SLT synthesis pseudos and the NE branch remain as separate RTL instructions with fully declared operands throughout register allocation.
 
-==== RTX Cost Model for Synthesized Shifts
+==== RTX Cost Model for Synthesized Shifts <sc1-rtx-costs>
 
 GCC's cost model assigns an integer cost to each RTX node; the optimizer uses these costs when deciding whether to inline, hoist, or duplicate computations. Without an explicit cost, synthesized shift operations inherited the same cost as native shift instructions --- one or two machine cycles. The optimizer therefore treated a synthesized SRL (up to ~170 instructions) as equivalent to a native `srl` (one instruction), and freely duplicated or inlined shift-heavy code.
 
@@ -1491,7 +1494,7 @@ The per-target header defines `CC1_SPEC` to inject flags automatically:
   " %{!mbyte:-mno-byte}   %{!mhalf:-mno-half}"
 ```
 
-The construct `%{!mfoo:-mno-foo}` reads: "if the user did not pass `-mfoo`, inject `-mno-foo`." A user invoking `rvsc1-unknown-elf-gcc program.c` passes no manual flags; the driver inserts the complete synthesis-enabling set automatically. The toolchain is built with a standard configure invocation using the target triple:
+The construct `%{!mfoo:-mno-foo}` reads: "if the user did not pass `-mfoo`, inject `-mno-foo`." A user invoking `rvsc1-unknown-elf-gcc program.c` passes no manual flags; the driver inserts the complete synthesis-enabling set automatically. `rvsc0.h` defines the same `CC1_SPEC` with one addition, `%{!mlui:-mno-lui}`, disabling native `lui` and routing large constants through the constant pool synthesis described in @sc0-lui. The toolchain is built with a standard configure invocation using the target triple:
 
 // TODO: add the build instructions, not sure if here
 ```sh
@@ -1700,6 +1703,8 @@ The 32 timed-out cases are programs that compile and execute correctly but gener
   ),
   caption: [gcc.c-torture programs that consistently time out (>300 s on Spike) due to synthesis overhead],
 ) <tbl-torture-timeouts>
+
+`riscv_rtx_costs` originally priced only synthesized shifts (@sc1-rtx-costs). It was later extended to cost the remaining synthesis-heavy operations realistically as well: sub-word memory extends and stores (`lb`/`lbu`/`lh`/`lhu` at ~75 instruction-equivalents, `sb`/`sh` at ~100--105), ordered comparisons when `!TARGET_SLT` (~65, for the `sub`/`xor`/`and`/`lshr` chain), and `xor` when `!TARGET_XOR` (3, for the `(a|b)-(a&b)` sequence). The intent was to let the optimizer avoid gratuitously duplicating or hoisting these expensive sequences, on the theory that this might reduce the retired-instruction count enough to clear some of the @tbl-torture-timeouts entries. Re-running all 20 program/optimization-level pairs from @tbl-torture-timeouts after the change showed no improvement: every pair still exceeds the 300-second Spike budget. This is consistent with the cost model's actual mechanism of action --- it only influences *codegen shape* decisions (inlining, GCSE, loop-invariant hoisting), not the number of times a loop already required by the source program executes. None of the flagged programs contain redundant or hoistable synthesis instances for the cost model to eliminate; their timeouts are dominated by legitimate loop trip counts multiplied by the fixed per-iteration synthesis overhead, which no cost-model change can reduce. The extension is retained because it makes the cost model accurate (a prerequisite for correct optimizer decisions elsewhere), but it does not affect @tbl-torture-results.
 
 One program, `pr38051.c`, required an additional fix specific to `-Os`. At this optimization level the inliner merged `mymemcmp3` into `mymemcmp`, producing a function body with a shift synthesis loop inside an outer loop over memory and a tail call to `mymemcmp1`. IRA exploited a live-range hole inside the synthesis loop to assign a synthesis scratch to the return-address register `ra` (x1); the sibcall then transferred control with `ra` corrupted, and the program looped forever. The three `_sc1` post-reload shift patterns (`lshrsi3_sc1`, `ashrsi3_sc1`, `ashlsi3_sc1_var`) allocate their scratches through `match_scratch` clobbers whose default constraint (`=&r`, class `GR_REGS`) includes `ra`. The fix defines a new register class `NORA_REGS = GR_REGS - {ra}` in `riscv.h`, exposes it through the constraint letter `yr` in `constraints.md`, and changes every scratch in the three synthesis patterns to `=&yr`. With this change the program passes at all five optimization levels.
 

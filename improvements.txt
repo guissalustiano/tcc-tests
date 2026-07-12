@@ -61,13 +61,33 @@ Suggested order (correctness first, then docs, then polish):
     git-stash A/B test to predate this refactor). Committed as
     ada605483e4.
 
- 7. improvements/07-rtx-costs-mem-slt.md
-    Extend riscv_rtx_costs beyond shifts: byte/half mem ops (~75-100),
-    slt/sltu (~65), xor (3). Should reduce -O2/-O3 torture timeouts.
+ 7. [done] improvements/07-rtx-costs-mem-slt.md
+    Extended riscv_rtx_costs beyond shifts: byte/half mem extends (~75) and
+    stores (~100-105), slt/sltu ordered comparisons (~65), xor (3). Verified
+    as correctness-neutral: sc1 full ISA + behav suites still pass after the
+    change (see riscv.cc, committed ac235cb2). Empirical result on the
+    hoped-for benefit was negative: re-ran all 20 (program, opt-level) pairs
+    from main.typ's @tbl-torture-timeouts post-fix and every one still
+    exceeds the 300s Spike budget — zero cleared. Root cause: rtx_costs only
+    steers codegen-shape decisions (inlining/GCSE/hoisting), not the fixed
+    loop-trip-count × per-iteration-synthesis-overhead product that actually
+    dominates these programs' runtime; none of the 11 flagged programs
+    contain redundant/hoistable synthesis instances for the cost model to
+    remove. Documented honestly in main.typ (new paragraph after
+    @tbl-torture-timeouts, main.typ:~1707) rather than claiming an
+    improvement that didn't happen. The cost fix is kept regardless since it
+    makes the cost model accurate, which is a correctness prerequisite for
+    other optimizer decisions even where it doesn't move this metric.
 
- 8. improvements/08-document-mlui-flag.md
-    -mlui exists in riscv.opt + riscv.cc hooks but is missing from every
-    flag table (main.typ @tbl-flags, CLAUDE.md).
+ 8. [done] improvements/08-document-mlui-flag.md
+    Added -mlui/TARGET_LUI to main.typ @tbl-flags and CLAUDE.md's target-
+    options table; added a paragraph in §sc0-lui naming the flag and the two
+    riscv.cc hooks (TARGET_LEGITIMATE_CONSTANT_P, TARGET_CANNOT_FORCE_CONST_MEM)
+    plus the riscv_split_symbol x0-base addressing trick; noted in
+    §sc1-registration that rvsc0.h extends rvsc1.h's CC1_SPEC with
+    %{!mlui:-mno-lui}; corrected CLAUDE.md's false "rvsc0 has no header"
+    claim. typst compile main.typ succeeds; every custom TARGET_* macro now
+    appears exactly once in @tbl-flags.
 
  9. improvements/09-torture-reporting.md
     Exact (not "~") torture numbers via --csv; separate KNOWN_SLOW from

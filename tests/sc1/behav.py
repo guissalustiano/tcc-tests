@@ -26,6 +26,7 @@ SC1_COMPILER = "rvsc1-unknown-elf-gcc"
 ISA          = "rv32imac_zicsr_zifencei"
 LD_SCRIPT    = SCRIPT_DIR / "pk32.ld"
 TEST_GLOB    = "tests/behav/*.c"
+OPT_LEVELS   = ["-O0", "-O1", "-O2", "-O3", "-Os"]
 
 
 def main() -> None:
@@ -34,6 +35,8 @@ def main() -> None:
     )
     parser.add_argument("sources", nargs="*", type=Path,
                         help=f"C source files (default: {TEST_GLOB})")
+    parser.add_argument("--opt", dest="opts", action="append", default=[],
+                        metavar="LEVEL", help="Optimization level (repeatable; default: all)")
     args = parser.parse_args()
 
     pk = os.environ.get("PK")
@@ -44,6 +47,8 @@ def main() -> None:
     if not sources:
         sys.exit(f"error: no test sources found (looked for {SCRIPT_DIR / TEST_GLOB})")
 
+    opts = args.opts or OPT_LEVELS
+
     sc1_gcc = find_tool(SC1_COMPILER)
     find_tool("spike")
 
@@ -53,33 +58,34 @@ def main() -> None:
         tmp = Path(_tmp)
 
         for src in map(Path, sources):
-            print(f"  {src.name} ...", end=" ", flush=True)
+            for opt in opts:
+                print(f"  {src.name} {opt} ...", end=" ", flush=True)
 
-            sc1_elf = tmp / f"{src.stem}.elf"
+                sc1_elf = tmp / f"{src.stem}{opt}.elf"
 
-            r = subprocess.run(
-                [sc1_gcc, "-O1", "-T", str(LD_SCRIPT),
-                 str(src), "-lsim", "-o", str(sc1_elf)],
-                capture_output=True, text=True,
-            )
-            if r.returncode != 0:
-                print(f"COMPILE ERROR\n{r.stderr.strip()}")
-                failed += 1
-                continue
+                r = subprocess.run(
+                    [sc1_gcc, opt, "-T", str(LD_SCRIPT),
+                     str(src), "-lsim", "-o", str(sc1_elf)],
+                    capture_output=True, text=True,
+                )
+                if r.returncode != 0:
+                    print(f"COMPILE ERROR\n{r.stderr.strip()}")
+                    failed += 1
+                    continue
 
-            try:
-                rc = run_spike(ISA, sc1_elf, pk=pk)
-            except SpikeTimeout as e:
-                print(f"TIMEOUT  ({e})")
-                failed += 1
-                continue
+                try:
+                    rc = run_spike(ISA, sc1_elf, pk=pk)
+                except SpikeTimeout as e:
+                    print(f"TIMEOUT  ({e})")
+                    failed += 1
+                    continue
 
-            if rc == 0:
-                print("PASS")
-                passed += 1
-            else:
-                print(f"FAIL  (exit {rc})")
-                failed += 1
+                if rc == 0:
+                    print("PASS")
+                    passed += 1
+                else:
+                    print(f"FAIL  (exit {rc})")
+                    failed += 1
 
     total = passed + failed
     print(f"\n{passed}/{total} passed")

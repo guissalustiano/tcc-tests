@@ -1548,7 +1548,7 @@ A key constraint distinguishes rvsc0 behavioral tests from rvsc1: global variabl
   caption: [Behavioral test files for rvsc0 (`tests/behav/`)],
 ) <tbl-sc0-behav-files>
 
-All 8 behavioral tests pass.
+All 8 behavioral tests pass at every optimization level (`-O0` through `-Os`), for 8 × 5 = 40 cases.
 
 === ISA Compliance Tests --- rvsc1 <sc1-isa-tests>
 
@@ -1612,7 +1612,7 @@ Behavioral correctness is verified by `behav.py`. For each `.c` file in `tests/b
   caption: [Behavioral test files for rvsc1 (`tests/behav/`)],
 ) <tbl-sc1-behav-files>
 
-All 6 behavioral tests pass at every optimization level (`-O0` through `-Os`).
+All 6 behavioral tests pass at every optimization level (`-O0` through `-Os`), for 6 × 5 = 30 cases.
 
 === gcc.c-torture/execute Torture Suite <sc1-torture-tests>
 
@@ -1629,8 +1629,8 @@ The full suite covers 1 684 × 5 = 8 420 compiler+optimizer combinations. @tbl-t
     [`-O1`], [~1 531], [~153], [0],
     [`-O2`], [1 505],  [164],  [15],
     [`-O3`], [~1 503], [~161], [~14],
-    [`-Os`], [~1 524], [~157], [~3],
-    [*Total*], [*7 545*], [*843*], [*32*],
+    [`-Os`], [~1 525], [~157], [~2],
+    [*Total*], [*7 546*], [*843*], [*31*],
   ),
   caption: [gcc.c-torture/execute results for rvsc1 (8 420 combinations)],
 ) <tbl-torture-results>
@@ -1659,7 +1659,7 @@ The 32 timed-out cases are programs that compile and execute correctly but gener
   caption: [gcc.c-torture programs that consistently time out (>300 s on Spike) due to synthesis overhead],
 ) <tbl-torture-timeouts>
 
-One additional program, `pr38051.c`, times out at `-Os`. At this optimization level the inliner merges `mymemcmp3` into `mymemcmp` and the resulting function body contains a shift synthesis loop inside an outer loop over memory. Remaining IRA live-range holes at `-Os` allow a synthesis temporary to be assigned to the return-address register `ra`. When the tail call to `mymemcmp1` executes, `ra` holds a corrupted value and the program loops forever. The program passes at `-O0`, `-O1`, `-O2`, and `-O3`.
+One program, `pr38051.c`, required an additional fix specific to `-Os`. At this optimization level the inliner merged `mymemcmp3` into `mymemcmp`, producing a function body with a shift synthesis loop inside an outer loop over memory and a tail call to `mymemcmp1`. IRA exploited a live-range hole inside the synthesis loop to assign a synthesis scratch to the return-address register `ra` (x1); the sibcall then transferred control with `ra` corrupted, and the program looped forever. The three `_sc1` post-reload shift patterns (`lshrsi3_sc1`, `ashrsi3_sc1`, `ashlsi3_sc1_var`) allocate their scratches through `match_scratch` clobbers whose default constraint (`=&r`, class `GR_REGS`) includes `ra`. The fix defines a new register class `NORA_REGS = GR_REGS - {ra}` in `riscv.h`, exposes it through the constraint letter `yr` in `constraints.md`, and changes every scratch in the three synthesis patterns to `=&yr`. With this change the program passes at all five optimization levels.
 
 === rvsc2 --- Fence Mnemonic Check
 

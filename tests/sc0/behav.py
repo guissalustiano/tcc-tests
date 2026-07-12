@@ -12,6 +12,7 @@ rvsc0's pool-based constant synthesis is only correct at link-time for
 programs where pool entries resolve to addresses < 2048 from x0.
 """
 
+import argparse
 import subprocess
 import sys
 import tempfile
@@ -26,6 +27,7 @@ ISA         = "rv32i"
 ENTRY_S     = SCRIPT_DIR / "entry.S"
 LD_SCRIPT   = SCRIPT_DIR / "link32.ld"
 TEST_GLOB   = "tests/behav/*.c"
+OPT_LEVELS  = ["-O0", "-O1", "-O2", "-O3", "-Os"]
 
 
 def run_spike_htif(elf: Path, timeout: int = 30) -> int:
@@ -39,9 +41,20 @@ def run_spike_htif(elf: Path, timeout: int = 30) -> int:
 
 
 def main() -> None:
-    sources = sorted(SCRIPT_DIR.glob(TEST_GLOB))
+    parser = argparse.ArgumentParser(
+        description="Behavioral smoke tests: rvsc0 on Spike (bare-metal HTIF)"
+    )
+    parser.add_argument("sources", nargs="*", type=Path,
+                        help=f"C source files (default: {TEST_GLOB})")
+    parser.add_argument("--opt", dest="opts", action="append", default=[],
+                        metavar="LEVEL", help="Optimization level (repeatable; default: all)")
+    args = parser.parse_args()
+
+    sources = args.sources or sorted(SCRIPT_DIR.glob(TEST_GLOB))
     if not sources:
         sys.exit(f"error: no test sources found ({SCRIPT_DIR / TEST_GLOB})")
+
+    opts = args.opts or OPT_LEVELS
 
     gcc = find_tool(COMPILER)
     find_tool("spike")
@@ -50,30 +63,31 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as _tmp:
         tmp = Path(_tmp)
         for src in map(Path, sources):
-            print(f"  {src.name} ...", end=" ", flush=True)
-            elf = tmp / f"{src.stem}.elf"
-            r = subprocess.run(
-                [gcc, "-O1", "-ffreestanding", "-fomit-frame-pointer",
-                 "-nostdlib", "-T", str(LD_SCRIPT),
-                 str(ENTRY_S), str(src), "-o", str(elf)],
-                capture_output=True, text=True,
-            )
-            if r.returncode != 0:
-                print(f"COMPILE ERROR\n{r.stderr.strip()}")
-                failed += 1
-                continue
-            try:
-                rc = run_spike_htif(elf)
-            except SpikeTimeout as e:
-                print(f"TIMEOUT  ({e})")
-                failed += 1
-                continue
-            if rc == 0:
-                print("PASS")
-                passed += 1
-            else:
-                print(f"FAIL  (exit {rc})")
-                failed += 1
+            for opt in opts:
+                print(f"  {src.name} {opt} ...", end=" ", flush=True)
+                elf = tmp / f"{src.stem}{opt}.elf"
+                r = subprocess.run(
+                    [gcc, opt, "-ffreestanding", "-fomit-frame-pointer",
+                     "-nostdlib", "-T", str(LD_SCRIPT),
+                     str(ENTRY_S), str(src), "-o", str(elf)],
+                    capture_output=True, text=True,
+                )
+                if r.returncode != 0:
+                    print(f"COMPILE ERROR\n{r.stderr.strip()}")
+                    failed += 1
+                    continue
+                try:
+                    rc = run_spike_htif(elf)
+                except SpikeTimeout as e:
+                    print(f"TIMEOUT  ({e})")
+                    failed += 1
+                    continue
+                if rc == 0:
+                    print("PASS")
+                    passed += 1
+                else:
+                    print(f"FAIL  (exit {rc})")
+                    failed += 1
 
     total = passed + failed
     print(f"\n{passed}/{total} passed")

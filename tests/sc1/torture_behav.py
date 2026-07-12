@@ -11,12 +11,15 @@ abort()/exit(1) on failure — no reference compiler needed.
 """
 
 import argparse
+import dataclasses
+import enum
 import os
 import re
 import signal
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -38,6 +41,21 @@ KNOWN_SLOW: set[tuple[str, str]] = {
     ("nestfunc-5.c", "-O2"),
     ("nestfunc-5.c", "-O3"),
 }
+
+
+class Outcome(enum.Enum):
+    PASS = "pass"
+    FAIL = "fail"
+    SKIP = "skip"
+    TIMEOUT = "timeout"
+
+
+@dataclasses.dataclass(frozen=True)
+class Result:
+    src: Path
+    opt: str
+    outcome: Outcome
+    message: str | None = None
 
 
 def get_dg_options(src: Path) -> list[str]:
@@ -82,6 +100,23 @@ def try_compile_link(compiler: str, src: Path, opt: str, out: Path,
     return True
 
 
+def run_one(compiler: str, pk: str, tmp: Path, src: Path, opt: str,
+            dg_opts: list[str]) -> Result:
+    """Compile+run one (src, opt) work item. Assumes KNOWN_SLOW already filtered."""
+    elf = tmp / f"{src.stem}{opt}.elf"
+    if not try_compile_link(compiler, src, opt, elf, dg_opts):
+        return Result(src, opt, Outcome.SKIP)
+    try:
+        rc = run_spike(ISA, elf, timeout=SPIKE_TIMEOUT, pk=pk)
+    except SpikeTimeout:
+        elf.unlink(missing_ok=True)
+        return Result(src, opt, Outcome.TIMEOUT)
+    elf.unlink(missing_ok=True)
+    if rc != 0:
+        return Result(src, opt, Outcome.FAIL, f"exit {rc}")
+    return Result(src, opt, Outcome.PASS)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Behavioral: gcc.c-torture tests on rvsc1 via Spike+pk"
@@ -90,6 +125,8 @@ def main() -> None:
                         help=f"C source files (default: {TORTURE_DIR}/*.c)")
     parser.add_argument("--opt", dest="opts", action="append", default=[],
                         metavar="LEVEL", help="Optimization level (repeatable; default: all)")
+    parser.add_argument("-j", "--jobs", type=int, default=None, metavar="N",
+                        help="Parallel workers (default: os.cpu_count(); capped at os.cpu_count())")
     args = parser.parse_args()
 
     pk = os.environ.get("PK")
@@ -104,32 +141,38 @@ def main() -> None:
     if not sources:
         sys.exit(f"error: no sources found in {TORTURE_DIR}")
 
-    passed = failed = skipped = 0
+    cpu_count = os.cpu_count() or 1
+    jobs = args.jobs if args.jobs is not None else cpu_count
+    if args.jobs is not None and args.jobs > cpu_count:
+        print(f"note: --jobs {args.jobs} exceeds cpu_count ({cpu_count}); using {cpu_count}",
+              file=sys.stderr)
+    jobs = max(1, min(jobs, cpu_count))
+
+    src_list = list(map(Path, sources))
+    dg_opts_by_src = {src: get_dg_options(src) for src in src_list}
+    total_pairs = len(src_list) * len(opts)
+    items = [(src, opt) for src in src_list for opt in opts
+             if (src.name, opt) not in KNOWN_SLOW]
+    skipped = total_pairs - len(items)
+    passed = failed = 0
 
     with tempfile.TemporaryDirectory() as _tmp:
         tmp = Path(_tmp)
-        for src in map(Path, sources):
-            dg_opts = get_dg_options(src)
-            for opt in opts:
-                if (src.name, opt) in KNOWN_SLOW:
-                    skipped += 1
-                    continue
-                elf = tmp / f"{src.stem}{opt}.elf"
-                if not try_compile_link(compiler, src, opt, elf, dg_opts):
-                    skipped += 1
-                    continue
-                try:
-                    rc = run_spike(ISA, elf, timeout=SPIKE_TIMEOUT, pk=pk)
-                except SpikeTimeout:
-                    print(f"  TIMEOUT {src.name} {opt}")
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            results = pool.map(
+                lambda item: run_one(compiler, pk, tmp, item[0], item[1],
+                                      dg_opts_by_src[item[0]]),
+                items,
+            )
+            for result in results:
+                if result.outcome is Outcome.TIMEOUT:
+                    print(f"  TIMEOUT {result.src.name} {result.opt}")
                     failed += 1
-                    elf.unlink(missing_ok=True)
-                    continue
-                elf.unlink(missing_ok=True)
-
-                if rc != 0:
-                    print(f"  FAIL {src.name} {opt}  (exit {rc})")
+                elif result.outcome is Outcome.FAIL:
+                    print(f"  FAIL {result.src.name} {result.opt}  ({result.message})")
                     failed += 1
+                elif result.outcome is Outcome.SKIP:
+                    skipped += 1
                 else:
                     passed += 1
 

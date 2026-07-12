@@ -741,42 +741,45 @@ addi rd, rd, -1     # rd = -rs1 - 1 = ~rs1
 
 Neither sc0 nor sc1 include `xor` or `xori`.
 
-*Proof.* The De Morgan identity $a \^ b = ~(a & b) & (a | b)$ holds for all bits $a, b in {0, 1}$, as the following truth table confirms:
+*Proof.* Claim: $a \^ b = (a | b) - (a & b)$ for all 32-bit words $a, b$, where the subtraction is ordinary two's-complement subtraction.
+
+Fix a bit position $i$ and write $x = a_i, y = b_i in {0, 1}$. Case analysis over the four combinations of $x, y$:
 
 #figure(
   table(
-    columns: 6,
+    columns: 5,
     align: center,
-    [$a$], [$b$], [$a & b$], [$~(a & b)$], [$a | b$], [$~(a & b) & (a | b)$],
-    [0], [0], [0], [1], [0], [0],
-    [0], [1], [0], [1], [1], [1],
-    [1], [0], [0], [1], [1], [1],
-    [1], [1], [1], [0], [1], [0],
+    [$a_i$], [$b_i$], [$(a | b)_i$], [$(a & b)_i$], [$(a | b)_i - (a & b)_i$],
+    [0], [0], [0], [0], [0],
+    [0], [1], [1], [0], [1],
+    [1], [0], [1], [0], [1],
+    [1], [1], [1], [1], [0],
   ),
-  caption: [Truth table establishing $~(a & b) & (a | b) = a \^ b$],
+  caption: [Truth table establishing $(a | b) - (a & b) = a \^ b$ bitwise],
 )
 
-The right-hand column matches $a \^ b$ in every row. Since the identity holds for each bit independently, it holds for all 32-bit words. $square$
-
-Using the derived `[not]` from @sc1-not:
+The last column matches $a \^ b$ in every row, so the identity holds per bit. Moreover $(a & b)_i = 1$ implies $(a | b)_i = 1$ in every row --- the 1-bits of $a & b$ are always a subset of the 1-bits of $a | b$. Consequently the per-bit subtraction $(a | b)_i - (a & b)_i$ never needs to borrow from a neighboring bit position: interpreting $a | b$ and $a & b$ as 32-bit binary numbers, the ordinary two's-complement subtraction `sub rd, ab_ior, ab_and` computes exactly the bitwise difference shown above, with no cross-bit borrow propagation. Hence the instruction-level subtraction yields $a \^ b$ exactly, for every $a, b$. $square$
 
 ```asm
-and   t0, rs1, rs2  # t0 = rs1 & rs2
-[not  t0, t0]       # t0 = ~(rs1 & rs2)  — 2 insns (Section 5.1.1)
-or    rd, rs1, rs2  # rd = rs1 | rs2
-and   rd, t0, rd    # rd = ~(rs1 & rs2) & (rs1 | rs2) = rs1 ^ rs2
+and  t0, rs1, rs2   # t0 = rs1 & rs2
+or   rd, rs1, rs2   # rd = rs1 | rs2
+sub  rd, rd, t0     # rd = (rs1 | rs2) - (rs1 & rs2) = rs1 ^ rs2
 ```
 
 #figure(
   table(
-    columns: (1fr, 1fr, 1fr, 1fr),
+    columns: (1fr, 1fr, 1fr),
     stroke: none,
     inset: (y: 4pt),
-    [*Listing*], [*With [not] expanded*], [*Extra registers*], [*Applies to*],
-    [4 insns], [6 insns], [1 (t0)], [rvsc0, rvsc1],
+    [*Static instructions*], [*Extra registers*], [*Applies to*],
+    [3 (register operand); 4 (immediate operand, +1 `li`)], [1 (register operand); 2 (immediate operand)], [rvsc0, rvsc1],
   ),
   caption: [Cost summary for XOR synthesis],
 )
+
+This is strictly cheaper than the De Morgan form $a \^ b = ~(a & b) & (a | b)$ used in an earlier revision of this backend (4 insns without `[not]` expanded, 6 with it, 1 extra register) --- see @sc1-cc-aliasing for the correctness reason the De Morgan form was abandoned, independent of the cost difference.
+
+Two `define_insn_and_split` fallback patterns (`*xorsi3_noxor`, `*xorhi3_noxor`) catch the rare case where GCC's combine pass reconstructs a raw `xor` RTX after the `define_expand` above has already run, and no native `xor` insn exists to match it. These patterns declare only a single early-clobber scratch register (`=&r`), because they are matched post-combine with a fixed operand template rather than through a `define_expand` that can allocate pseudo-registers freely. Since $(a | b) - (a & b)$ needs both the AND and the OR of $a, b$ simultaneously live before the final `sub`, it requires two temporaries and does not fit in one scratch register; the fallback patterns instead use the algebraically equivalent rearrangement $a \^ b = a + b - 2(a & b)$, which needs only one scratch (the AND result is doubled and subtracted from $a$ in place, then $b$ is added back), at the cost of one extra instruction (4 insns instead of 3). The two forms are the same identity factored differently to fit two different register budgets, not two independently-derived identities; unifying the fallback patterns to also use $(a|b)-(a&b)$ would require widening them to two scratch registers, a change tracked separately as part of the broader synthesis-helper factoring effort and left out of this derivation to avoid touching combine-fallback matching behavior outside the scope of the XOR proof itself.
 
 ==== Shifts: SLL, SRL, SRA <sc1-shifts>
 
@@ -1317,35 +1320,51 @@ All flags have `Init(1)` (enabled by default). The per-target header (`rvscN.h`)
 The GCC machine description (`riscv.md`) uses two complementary constructs per synthesized operation: a `define_insn` guarded by `TARGET_XYZ` that emits the native instruction when the flag is enabled, and a `define_expand` guarded by `!TARGET_XYZ` that emits the synthesis sequence and calls `DONE`, preventing GCC from falling through to the native insn. The XOR synthesis illustrates the pattern:
 
 ```scheme
-;; Native XOR — emitted only when TARGET_XOR is true
-(define_insn "xorsi3"
-  [(set (match_operand:SI 0 "register_operand" "=r")
-        (xor:SI (match_operand:SI 1 "register_operand" "r")
-                (match_operand:SI 2 "register_operand" "r")))]
-  "TARGET_XOR"
-  "xor\t%0,%1,%2")
+;; Native XOR (and OR) — emitted only when TARGET_XOR (XOR) or always (IOR)
+(define_insn "*<optab><mode>3"
+  [(set (match_operand:X                0 "register_operand" "=r,r")
+        (any_or:X (match_operand:X 1 "register_operand" "%r,r")
+                       (match_operand:X 2 "arith_operand"    " r,I")))]
+  "TARGET_XOR || (<CODE>) == IOR"
+  "<insn>%i2\t%0,%1,%2")
 
-;; XOR synthesis — fires when !TARGET_XOR
-(define_expand "xorsi3"
-  [(set (match_operand:SI 0 "register_operand")
-        (xor:SI (match_operand:SI 1 "register_operand")
-                (match_operand:SI 2 "register_operand")))]
-  "!TARGET_XOR"
+;; XOR/OR synthesis — the any_or expand shared by both codes
+(define_expand "<optab><mode>3"
+  [(set (match_operand:X 0 "register_operand")
+        (any_or:X (match_operand:X 1 "register_operand" "")
+                   (match_operand:X 2 "reg_or_const_int_operand" "")))]
+  ""
 {
-  rtx t0 = gen_reg_rtx (SImode);
-  emit_insn (gen_andsi3 (t0, operands[1], operands[2]));
-  emit_insn (gen_one_cmplsi2 (t0, t0));      /* [not] */
-  emit_insn (gen_iorsi3 (operands[0], operands[1], operands[2]));
-  emit_insn (gen_andsi3 (operands[0], t0, operands[0]));
-  DONE;
+  /* sc1 synthesis: a ^ b = (a | b) - (a & b).
+     Using sub instead of NOT avoids an instruction-scheduling hazard:
+     the old ~(a&b)&(a|b) form has no data edge between the OR and the
+     negation of AND, so RTL optimisers reorder them and the register
+     allocator then aliases neg to op1's register, corrupting ab_ior. */
+  if ((<CODE>) == XOR && !TARGET_XOR)
+    {
+      rtx op1    = operands[1];
+      rtx op2    = REG_P (operands[2]) ? operands[2]
+                                       : force_reg (SImode, operands[2]);
+      rtx ab_and = gen_reg_rtx (SImode);
+      rtx ab_ior = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (ab_and, op1, op2));
+      emit_insn (gen_iorsi3 (ab_ior, op1, op2));
+      emit_insn (gen_subsi3 (operands[0], ab_ior, ab_and));
+      DONE;
+    }
+  /* sc1 synthesis: ori rd, rs, imm → li t, imm; or rd, rs, t */
+  if ((<CODE>) == IOR && !TARGET_ORI && CONST_INT_P (operands[2]))
+    operands[2] = force_reg (<MODE>mode, operands[2]);
+  if (CONST_INT_P (operands[2]) && synthesize_ior_xor (<OPTAB>, operands))
+    DONE;
 })
 ```
 
-The `DONE` call signals that the expansion body has fully handled the operation; GCC does not attempt to match the `define_insn` afterwards.
+The pattern is shared between `XOR` and `IOR` via the `any_or` code iterator (`<optab>` and `<CODE>` are resolved to `xorsi3`/`XOR` and `iorsi3`/`IOR` at machine-description expansion time). The `DONE` call inside the `XOR` branch signals that the expansion body has fully handled the operation; GCC does not attempt to match the `define_insn` afterwards.
 
 === Implementation Corner Cases <sc1-corner-cases>
 
-Several correctness problems appeared only at higher optimization levels (`-O2`, `-O3`) and required understanding interactions between GCC passes that are invisible during basic `-O1` testing. This subsection documents the three corner cases encountered and the fixes applied.
+Several correctness problems appeared only at higher optimization levels (`-O2`, `-O3`) and required understanding interactions between GCC passes that are invisible during basic `-O1` testing. This subsection documents the four corner cases encountered and the fixes applied.
 
 ==== IRA Register Corruption from Long Synthesis Loops
 
@@ -1418,16 +1437,39 @@ case LSHIFTRT:
 
 A constant shift count costs 64 instruction-equivalents (reflecting the unrolled constant SLL sequence); a variable count costs 200 (the worst-case SRL/SRA loop). With these costs the optimizer avoids aggressively inlining functions that contain shift operations, keeping the per-function RTL stream small enough that IRA live-range holes are rare.
 
+==== Register Aliasing in Dataflow-Disconnected Synthesis Sequences <sc1-cc-aliasing>
+
+An earlier revision of the XOR synthesis used the De Morgan identity $a \^ b = ~(a & b) & (a | b)$ (@sc1-xor discusses why this identity is correct; the problem here is unrelated to correctness of the algebra). The sequence was:
+
+```asm
+and  t0, rs1, rs2   # t0 = rs1 & rs2
+not  t0, t0         # t0 = ~(rs1 & rs2)      -- expands to sub+addi
+or   rd, rs1, rs2   # rd = rs1 | rs2
+and  rd, t0, rd      # rd = ~(rs1 & rs2) & (rs1 | rs2)
+```
+
+The `not t0, t0` step (itself synthesized as `sub t0, x0, t0; addi t0, t0, -1`, per @sc1-not) reads and writes only `t0`; it shares no register operand with the `or rd, rs1, rs2` instruction that computes `ab_ior`. In RTL terms, the negation and the OR are dataflow-independent --- neither is a use or a def of the other's operands --- so nothing in the instruction stream forces the register allocator to keep them apart.
+
+GCC's scheduler is free to reorder dataflow-independent instructions, and IRA allocates registers based on live-range interference, not program order. Because `not`'s output (`t0`, holding `~(rs1 & rs2)`) and `or`'s output (`rd`, holding `rs1 | rs2`, i.e. `ab_ior`) had no edge connecting them in the dependence graph, IRA occasionally proved that `t0`'s live range and `op1`'s (one of the original operands, `rs1`) live range did not overlap and assigned `neg` the same physical register as `op1`. If the final `and rd, t0, rd` instruction had not yet consumed `ab_ior`'s value at that point, the reused register silently corrupted `ab_ior` before the last `and` read it, producing a wrong result that only appeared at `-O2` and above, where the scheduler is more aggressive about reordering.
+
+The fix (documented in the riscv.md comment immediately above the `<optab><mode>3` expand, @sc1-xor) replaces the De Morgan sequence with $a \^ b = (a | b) - (a & b)$. Both `ab_and` and `ab_ior` are now direct source operands of the final `sub rd, ab_ior, ab_and` instruction: the dependence graph has an explicit edge from each temporary to the instruction that consumes it, so IRA must keep both live simultaneously through to the `sub`, and can never alias either one to an operand register that is still needed. The bug class --- a synthesis sequence in which two temporaries feed the *same* final instruction but have *no direct dataflow edge to each other* --- is a general hazard for any multi-step synthesis in this backend: whenever a derivation can be restructured so that every intermediate result flows directly into the instruction that needs it (rather than being combined implicitly through program order), the register allocator has no room to alias registers incorrectly.
+
 === Worked Example: XOR in C to Assembly <sc1-example>
 
 The following traces how `unsigned f(unsigned a, unsigned b) { return a ^ b; }` is compiled by `rvsc1-unknown-elf-gcc -S -O1`:
 
 + *Frontend*: parses `a ^ b` to an AST `XOR_EXPR` node.
 + *GIMPLE*: `_1 = a ^ b; return _1;` — language-independent SSA form.
-+ *RTL lowering*: GCC attempts to emit `xorsi3`. `TARGET_XOR` is 0 (rvsc1 disables XOR), so the `define_expand` synthesis body fires.
-+ *Expansion*: the body allocates a pseudo-register, emits `andsi3`, `one_cmplsi2`, `iorsi3`, and `andsi3` into the RTL stream, then calls `DONE`.
-+ *Register allocation*: GCC maps pseudo-registers to physical registers (`a0`, `a1`, `t0`) such that no `xor` instruction appears.
-+ *Assembly output*: inspecting the result with `grep xor` returns empty; only `and`, `sub`, `addi`, and `or` appear — all native sc1 instructions.
++ *RTL lowering*: GCC attempts to emit `xorsi3`. `TARGET_XOR` is 0 (rvsc1 disables XOR), so the `XOR` branch of the `<optab><mode>3` synthesis body fires (@sc1-md).
++ *Expansion*: the body allocates two pseudo-registers (`ab_and`, `ab_ior`), emits `andsi3` into `ab_and`, `iorsi3` into `ab_ior`, then `subsi3` computing `ab_ior - ab_and` into the destination, and calls `DONE`.
++ *Register allocation*: GCC maps pseudo-registers to physical registers (`a0`, `a1`, `a5`) such that no `xor` instruction appears; `ab_ior` is allocated directly into the destination register `a0`, so only one extra register (`a5`, holding `ab_and`) is visible in the output.
++ *Assembly output*:
+```asm
+and  a5, a0, a1
+or   a0, a0, a1
+sub  a0, a0, a5
+```
+inspecting the result with `grep xor` returns empty; only `and`, `or`, and `sub` appear — all native sc1 instructions.
 
 === Target Registration <sc1-registration>
 
@@ -1511,7 +1553,7 @@ ISA compliance is verified by `main.py`. For every `.c` file in `tests/isa/`, th
     [`branch.c`], [BNE, BLT, BGE, BLTU, BGEU — synthesized from `beq` via SLT chains],
     [`lb.c`],     [LB signed byte load — synthesized via `lw`+shift+sign-extend],
     [`lh.c`],     [LH signed/unsigned halfword load — synthesized via `lw`+shift+mask],
-    [`logic.c`],  [AND, OR (native); XOR via De Morgan; ANDI/ORI via `li`+register-op],
+    [`logic.c`],  [AND, OR (native); XOR via `(a|b)-(a&b)`; ANDI/ORI via `li`+register-op],
     [`lui.c`],    [LUI — synthesized via constant pool: `lw rd, %lo(pool)(x0)`],
     [`not.c`],    [Bitwise NOT — synthesized as `sub x0, rs; addi rd, rd, -1`],
     [`sb.c`],     [SB byte store — synthesized via `lw`+clear+insert+`sw`],
@@ -1538,10 +1580,10 @@ A key constraint distinguishes rvsc0 behavioral tests from rvsc1: global variabl
     [*Test file*], [*Cases covered*],
     [`arith.c`],  [ADD/SUB/ADDI on positive, negative, and zero operands; AND and OR identity and absorption],
     [`branch.c`], [Signed and unsigned comparisons: `<`, `>`, `<=`, `>=`, `!=`; all synthesized from `beq`+SLT chains],
-    [`logic.c`],  [XOR, ANDI, ORI on representative values; De Morgan identity; complement-via-XOR],
+    [`logic.c`],  [XOR, ANDI, ORI on representative values; `(a|b)-(a&b)` identity; complement-via-XOR],
     [`loop.c`],   [Ascending for-loop (sum 1..10), countdown while-loop (doubling to 256), do-while (repeated addition), nested loops],
     [`mem.c`],    [SB/LBU/LB on all four byte lanes; SH/LHU/LH on both halfword lanes; signed widening via volatile intermediary],
-    [`not.c`],    [NOT on 0, −1, 1, −128, 127; combined `~&`, `~|`; De Morgan XOR identity],
+    [`not.c`],    [NOT on 0, −1, 1, −128, 127; combined `~&`, `~|`; XOR cross-checked against the De Morgan-equivalent formula `(a|b)&~(a&b)`],
     [`shift.c`],  [SLL/SRL/SRA with constant counts (1, 3, 8); variable counts; sign-propagation (SRA) and zero-fill (SRL)],
     [`slt.c`],    [SLT and SLTU: signed ordering, unsigned ordering, equality; unsigned wrap-around larger than small positive],
   ),
@@ -1586,7 +1628,7 @@ The `-M no-aliases` flag is essential: it expands pseudo-instructions to their u
     [`slt.c`],     [SLT and SLTU — synthesized via sub/xor/and/lshr],
     [`sra.c`],     [SRA with variable shift count — bit-extraction loop + sign-fill],
     [`srl.c`],     [SRL with variable shift count — bit-extraction loop],
-    [`xor.c`],     [XOR — synthesized via De Morgan: `~(a&b) & (a|b)`],
+    [`xor.c`],     [XOR — synthesized via `(a|b) - (a&b)`],
   ),
   caption: [ISA compliance test files for rvsc1 (`tests/isa/`)],
 ) <tbl-sc1-isa-files>
@@ -1604,7 +1646,7 @@ Behavioral correctness is verified by `behav.py`. For each `.c` file in `tests/b
     [*Test file*], [*Cases covered*],
     [`branch.c`], [Signed and unsigned comparisons: `<`, `>`, `<=`, `>=`, `!=`; boundary values including `INT_MIN`, `INT_MAX`, and `UINT_MAX`],
     [`call.c`],   [Recursive Fibonacci (`fib(10)=55`), multi-argument calls, function pointer call via `get_sum()(10,20,30)`],
-    [`logic.c`],  [XOR, ORI, ANDI, NOT on representative bit patterns; De Morgan identity; complement-via-XOR],
+    [`logic.c`],  [XOR, ORI, ANDI, NOT on representative bit patterns; `(a|b)-(a&b)` identity; complement-via-XOR],
     [`mem.c`],    [SB/LBU/LB and SH/LHU/LH on aligned addresses; signed/unsigned byte and halfword widening],
     [`shift.c`],  [SLL/SRL/SRA with constant counts (3, 15, 16, 4); variable counts; sign-propagation and zero-fill],
     [`slt.c`],    [SLT and SLTU with `a=-1`, `b=1`; `INT_MIN < INT_MAX`; `UINT_MAX > 0`],
@@ -1673,7 +1715,7 @@ No testing is performed for rvsc3 through rvsc7. These targets contain no synthe
 
 Each synthesized instruction expands into a sequence of native instructions, increasing the static size of the compiled binary. The expansion ratio --- the number of native instructions emitted divided by the number of instructions a full-ISA compiler would emit --- quantifies the cost of each missing hardware instruction.
 
-Synthesis sequences fall into two categories. _Constant-length_ expansions always emit the same number of instructions regardless of operand values: NOT expands to 2 instructions, XOR to 6 (counting the NOT it calls), and each immediate variant (ANDI, ORI) adds 1 instruction. _Variable-length_ expansions depend on runtime values: SLL, SRL, and SRA use count-down loops whose length is proportional to the shift amount, with worst-case counts of 127, ~170, and ~200 instructions respectively for a shift of 31.
+Synthesis sequences fall into two categories. _Constant-length_ expansions always emit the same number of instructions regardless of operand values: NOT expands to 2 instructions, XOR to 3 (register operands; 4 with an immediate operand, @sc1-xor), and each immediate variant (ANDI, ORI) adds 1 instruction. _Variable-length_ expansions depend on runtime values: SLL, SRL, and SRA use count-down loops whose length is proportional to the shift amount, with worst-case counts of 127, ~170, and ~200 instructions respectively for a shift of 31.
 
 // TODO [DATA REQUIRED]
 // Run rvsc0, rvsc1, and rvsc3 compilers on the programs below and count instructions:

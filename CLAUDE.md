@@ -193,7 +193,7 @@ The core of all instruction synthesis. Key patterns:
   - `LSHIFTRT` (sc1): loop-based bit extraction via `and`/`or`/`add`/`beq`; a sub-loop computes `in_mask = 1 << shamt`.
   - `ASHIFTRT` (sc1): same srl loop inlined, then if sign bit was set, OR in `sign_mask = -1 << (32 − shift)`.
 - **`define_expand "<optab>si3"` (logic)** — `and3`/`ior3`/`xor3` share one expand with `(<CODE>) ==` guards:
-  - `XOR` (sc1): De Morgan — `~(a & b) & (a | b)`.
+  - `XOR` (sc1): `(a | b) - (a & b)` — `and ab_and,a,b; or ab_ior,a,b; sub rd,ab_ior,ab_and`. Uses two pseudos so IRA keeps a dataflow edge into the final `sub`; the earlier `~(a&b)&(a|b)` De Morgan form lacked that edge and let IRA alias the NOT result onto an operand register, corrupting `ab_ior` (see riscv.md ~1787 comment).
   - `IOR` immediate (sc1): `li t, imm; or rd, rs, t`.
   - `AND` immediate (sc1): `li t, imm; and rd, rs, t`.
 - **`zero_extendhi<GPR:mode>2` expand** — when `!TARGET_HALF && MEM_P`: synthesizes `lhu` as `addr&-4 → lw word → (addr&2)<<3 → lshr → (<<16)>>16` (logical).
@@ -216,7 +216,7 @@ The core of all instruction synthesis. Key patterns:
 | Operation | Instructions (worst case) | Extra registers | Applies to |
 |-----------|--------------------------|-----------------|------------|
 | NOT | 2 | 0 | rvsc0, rvsc1 |
-| XOR | 6 (NOT expanded) | 1 | rvsc0, rvsc1 |
+| XOR | 3 (reg); 4 (imm) | 1 (reg); 2 (imm) | rvsc0, rvsc1 |
 | SLL | 3 + 4b (max 127 at b=31) | 1 | rvsc0, rvsc1 |
 | SRL | ~170 | 5 | rvsc0, rvsc1 |
 | SRA | ~200 | 6 | rvsc0, rvsc1 |
@@ -238,7 +238,7 @@ Custom boolean flags added for this project:
 | `-mfence` | `TARGET_FENCE` | `fence`/`fence.i` expands are no-ops |
 | `-mauipc` | `TARGET_AUIPC` | PC-relative → absolute `lui+lo12`; calls → `lui+jalr` |
 | `-mshift` | `TARGET_SHIFT` | native `sll`/`srl`/`sra` gated off; synthesis in expand |
-| `-mxor` | `TARGET_XOR` | `xor` → De Morgan; `not`/`xori rd,rs,-1` → `sub+addi` |
+| `-mxor` | `TARGET_XOR` | `xor` → `(a\|b)-(a&b)`; `not`/`xori rd,rs,-1` → `sub+addi` |
 | `-mori` | `TARGET_ORI` | `ori` → `li t, imm; or` |
 | `-mandi` | `TARGET_ANDI` | `andi` → `li t, imm; and`; zero-extend byte handled by special split |
 | `-mbne` | `TARGET_BNE` | `bne` → `beq+skip+lui+addi+jr` |

@@ -75,7 +75,7 @@ def try_compile_to_obj(
     try:
         proc = subprocess.Popen(
             [compiler, "-c", opt, "-ffreestanding", *cflags, "-o", str(o), str(src)],
-            capture_output=True, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             start_new_session=True,
         )
         try:

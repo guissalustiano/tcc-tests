@@ -1,5 +1,5 @@
 /* sc0 behavioral smoke test: xor, andi, ori synthesis.
-   XOR synthesized via De Morgan: ~(a&b) & (a|b).
+   XOR synthesized via (a|b) - (a&b).
    ANDI/ORI: li tmp, imm; and/or rd, rs, tmp  */
 
 int run_test(void) {

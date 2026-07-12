@@ -25,8 +25,8 @@ int run_test(void) {
     if ((a & ~b) != 0x0C)  return 7;   /* 0x0F & ~0x33 = 0x0C */
     if ((~a | b)  != -13)  return 8;   /* ~0x0F | 0x33 = 0xFFFFFFF3 = -13 */
 
-    /* XOR via De Morgan: a ^ b == ~(~a | ~b) | ~(a | b)
-       Simpler check: a ^ b == (a | b) & ~(a & b) */
+    /* Independent cross-check of XOR (compiler synthesizes it as
+       (a|b)-(a&b)) against the unrelated identity a^b == (a|b) & ~(a&b) */
     volatile int xr = a ^ b;
     if (xr != ((a | b) & ~(a & b)))  return 9;
 

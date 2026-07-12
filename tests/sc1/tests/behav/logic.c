@@ -4,7 +4,7 @@ int main(void) {
     if ((a | 0x0F0F) != (int)0xAA55FF0F) return 2;
     if ((a & 0xFF00) != 0x0000FF00)       return 3;
     if (~a != (int)0x55AA00FF)            return 4;
-    if (((a | b) & ~(a & b)) != (a ^ b)) return 5;  /* XOR via De Morgan */
+    if (((a | b) & ~(a & b)) != (a ^ b)) return 5;  /* cross-check XOR against an independent identity */
     if ((a ^ -1) != ~a)                   return 6;  /* complement via xor */
     return 0;
 }

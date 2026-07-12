@@ -1583,7 +1583,7 @@ A key constraint distinguishes rvsc0 behavioral tests from rvsc1: global variabl
     [`logic.c`],  [XOR, ANDI, ORI on representative values; `(a|b)-(a&b)` identity; complement-via-XOR],
     [`loop.c`],   [Ascending for-loop (sum 1..10), countdown while-loop (doubling to 256), do-while (repeated addition), nested loops],
     [`mem.c`],    [SB/LBU/LB on all four byte lanes; SH/LHU/LH on both halfword lanes; signed widening via volatile intermediary],
-    [`not.c`],    [NOT on 0, −1, 1, −128, 127; combined `~&`, `~|`; XOR cross-checked against the De Morgan-equivalent formula `(a|b)&~(a&b)`],
+    [`not.c`],    [NOT on 0, −1, 1, −128, 127; combined `~&`, `~|`; XOR cross-checked in C against the independent formula `(a|b)&~(a&b)`],
     [`shift.c`],  [SLL/SRL/SRA with constant counts (1, 3, 8); variable counts; sign-propagation (SRA) and zero-fill (SRL)],
     [`slt.c`],    [SLT and SLTU: signed ordering, unsigned ordering, equality; unsigned wrap-around larger than small positive],
   ),

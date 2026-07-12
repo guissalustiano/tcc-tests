@@ -27,7 +27,12 @@ Suggested order (correctness first, then docs, then polish):
     corner case #4 "Register Aliasing in Dataflow-Disconnected Synthesis
     Sequences" added at §sc1-cc-aliasing (main.typ:1440). *xorhi3_noxor's
     a+b-2(a&b) form intentionally left unmerged, footnoted as tracked under
-    item 6.
+    item 6. Follow-up cleanup: the rvsc0 behavioral test-table cell
+    (main.typ:1586) and stale "De Morgan" comments in four test sources
+    (tests/sc0/tests/isa/logic.c, tests/sc0/tests/behav/{logic,not}.c,
+    tests/sc1/tests/behav/logic.c) still described the old synthesis;
+    reworded to describe the cross-check formulas as independent identities
+    rather than implying the compiler still synthesizes XOR via De Morgan.
 
  5. [done] improvements/05-delete-dead-branch-templates.md
     Removed unreachable raw-asm SLT/SLTU branch templates (undeclared t2-t4

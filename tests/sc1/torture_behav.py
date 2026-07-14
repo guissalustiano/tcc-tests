@@ -42,6 +42,34 @@ KNOWN_SLOW: set[tuple[str, str]] = {
     ("nestfunc-5.c", "-O3"),
 }
 
+# Tests that are out of scope regardless of opt level: upstream-flagged
+# "expensive" tests that blow COMPILE_TIMEOUT on their own, tests using GCC
+# extensions unsupported on this freestanding 32-bit target (_Decimal*), and
+# tests using host-architecture-specific inline asm (x87). Shared with
+# torture_isa.py (imported from here) since none of these compile regardless
+# of which downstream check consumes the result.
+KNOWN_UNSUPPORTED: set[str] = {
+    # Expensive tests (upstream dg-require-effective-target run_expensive_tests /
+    # high dg-timeout-factor): compile time alone exceeds COMPILE_TIMEOUT.
+    "memclr.c",
+    "memcpy-a1.c",
+    "memcpy-a2.c",
+    "memcpy-a4.c",
+    "memcpy-a8.c",
+    # Decimal floating point (_Decimal32/64/128): unsupported GCC extension.
+    "pr80692.c",
+    # x86-specific inline asm (st(1) x87 register): not applicable to RISC-V.
+    "990413-2.c",
+    # __int128 (TImode) unconditionally: GCC only supports a scalar integer
+    # mode when its width is 2*BITS_PER_WORD (the middle end's built-in
+    # "double word" support). On rv32, 2*32=64, not 128, so __int128 is
+    # rejected outright -- true of upstream rv32 GCC in general, not
+    # specific to sc1's restricted instruction set.
+    "pr93213.c",
+    "pr84748.c",
+    "pr105613.c",
+}
+
 
 class Outcome(enum.Enum):
     PASS = "pass"
@@ -152,7 +180,8 @@ def main() -> None:
     dg_opts_by_src = {src: get_dg_options(src) for src in src_list}
     total_pairs = len(src_list) * len(opts)
     items = [(src, opt) for src in src_list for opt in opts
-             if (src.name, opt) not in KNOWN_SLOW]
+             if (src.name, opt) not in KNOWN_SLOW
+             and src.name not in KNOWN_UNSUPPORTED]
     skipped = total_pairs - len(items)
     passed = failed = 0
 

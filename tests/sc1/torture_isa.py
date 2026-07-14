@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from common import find_tool, try_compile_to_obj, disassemble_mnemonics
+from torture_behav import KNOWN_UNSUPPORTED
 
 SCRIPT_DIR  = Path(__file__).parent
 TORTURE_DIR = SCRIPT_DIR.parent.parent / "gcc" / "gcc" / "testsuite" / "gcc.c-torture" / "execute"
@@ -53,6 +54,9 @@ def main() -> None:
     passed = failed = skipped = 0
 
     for src in map(Path, sources):
+        if src.name in KNOWN_UNSUPPORTED:
+            skipped += len(opts)
+            continue
         for opt in opts:
             obj = try_compile_to_obj(compiler, src, opt, [])
             if obj is None:

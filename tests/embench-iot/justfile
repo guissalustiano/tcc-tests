@@ -1,0 +1,22 @@
+# Embench-IoT benchmarks for rvsc1 / rvsc2 / gcc17 (GCC 17 rv32i) / stock ref.
+#
+# Requires scons + pyelftools from the project dev shell (default.nix).
+# The gcc17 toolchain must be built first: cd ../rv32i && just setup
+
+default: size
+
+# Per-benchmark .text sizes + synthesis expansion ratios.
+size:
+    python3 size_report.py --csv size.csv
+
+# Same, but allow a longer per-file compile timeout for shift-heavy sources.
+size-slow:
+    python3 size_report.py --timeout 1200 --csv size.csv
+
+# Dynamic retired-instruction counts on Spike (PK env var must point to pk32).
+perf:
+    python3 perf_report.py --csv perf.csv
+
+# Same, but allow a longer per-benchmark Spike budget.
+perf-slow:
+    python3 perf_report.py --timeout 600 --csv perf.csv

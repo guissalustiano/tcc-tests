@@ -217,7 +217,7 @@ The core of all instruction synthesis. Key patterns:
 |-----------|--------------------------|-----------------|------------|
 | NOT | 2 | 0 | rvsc0, rvsc1 |
 | XOR | 3 (reg); 4 (imm) | 1 (reg); 2 (imm) | rvsc0, rvsc1 |
-| SLL | 3 + 4b (max 127 at b=31) | 1 | rvsc0, rvsc1 |
+| SLL | 6b + 1 (max 187 at b=31) | 1 | rvsc0, rvsc1 |
 | SRL | ~170 | 5 | rvsc0, rvsc1 |
 | SRA | ~200 | 6 | rvsc0, rvsc1 |
 | SLT | ~60 | 3 | rvsc0, rvsc1 |

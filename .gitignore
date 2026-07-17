@@ -77,6 +77,11 @@ stamp-*
 .direnv/
 .envrc
 
+# large source repos cloned inside the workspace (tracked by their own git)
+/binutils-gdb/
+/gcc/
+/newlib-src/
+
 # scw build directories — ignore compiled artifacts, keep justfiles/instructions/tests
 /scw/sc*/build/
 /scw/sc*/install/
@@ -84,6 +89,12 @@ stamp-*
 # tests build directories
 /tests/sc*/build/
 /tests/sc*/build-binutils/
+/tests/rv32i/build/
+/tests/rv32i/build-binutils/
+/tests/rv32i/build-newlib/
+
+# vendor headers copied into embench-iot examples
+/tests/embench-iot/examples/arm/stm32f4-discovery/Include/
 
 main.pdf
 /tesis-reference/

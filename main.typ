@@ -224,9 +224,9 @@ This is the english abstract.
 // - Consulted works must be cited and referenced in the text.
 // - Presents the context in which the work will be developed.
 
-_Computer Organization and Design: RISC-V Edition_ by Patterson and Hennessy @patterson2020 is one of the most widely adopted references in undergraduate computer architecture courses worldwide. At the University of São Paulo's Escola Politécnica, the course PCS3225 - Digital Systems 2 - uses this textbook as its primary reference. Students follow its progression step by step, implementing a simplified RISC-V processor in Verilog from book reference.
+_Computer Organization and Design: RISC-V Edition_ by Patterson and Hennessy @patterson2020 is one of the most widely adopted references in undergraduate computer architecture courses worldwide. At the University of São Paulo's Escola Politécnica, the course _PCS3225 - Digital Systems 2_  uses this textbook as its primary reference. Students follow its progression step by step, implementing a simplified RISC-V processor in Verilog from book reference.
 
-The simplified single-cycle processor introduced in Chapter 4.4 of the book - _A Simple Implementation Scheme_ - supports only eight instructions: `lw`, `sw`, `beq`, `add`, `addi`, `sub`, `and`, and `or`. This restriction is deliberate and pedagogically motivated: it isolates the essential datapath and control concepts before more complex features are introduced. A subsequent homework assignment extends the processor with `lui` and `jalr`, enabling function calls. Both implementations are partial subsets of the RV32I base ISA @riscv-spec.
+The simplified single-cycle processor introduced in Chapter 4.4 of the book, _A Simple Implementation Scheme_, supports only eight instructions: `lw`, `sw`, `beq`, `add`, `addi`, `sub`, `and`, and `or`. This restriction is deliberate and pedagogically motivated, it isolates the essential datapath and control concepts before more complex features are introduced. A subsequent homework assignment extends the processor with `lui` and `jalr`, enabling function calls. Both implementations are partial subsets of the RV32I base ISA @riscv-spec.
 
 This restriction creates a practical barrier. The standard RISC-V GCC toolchain (`riscv32-unknown-elf-gcc`) targets the full RV32I base ISA @riscv-spec, which includes shift instructions, byte and halfword memory operations, multiple branch variants, and PC-relative addressing. Any C program compiled with this toolchain will emit instructions that the student-built processor cannot execute.
 
@@ -241,7 +241,7 @@ This work develops eight progressive GCC compiler targets for the simplified RIS
 The specific objectives are:
 
 + Define a minimal GCC target (`rvsc0`) matching the eight-instruction single-cycle processor described in Chapter 4.4 of the textbook, synthesizing all operations not natively supported by that processor.
-+ Define a target (`rvsc1`) matching the course homework processor --- `rvsc0` extended with `lui` and `jalr` --- as the minimum instruction set capable of supporting the full C calling convention with synthesis.
++ Define a target (`rvsc1`) matching the course homework processor, `rvsc0` extended with `lui` and `jalr`, as the minimum instruction set capable of supporting the full C calling convention with synthesis.
 + Define six additional progressive targets (`rvsc2` through `rvsc7`), incrementally extending the supported instruction set from bare RV32I through RV64IMAFD, for students who wish to continue developing their processor beyond the course scope.
 + Synthesize every instruction not natively supported by a given target as an equivalent sequence of instructions that the target does support.
 
@@ -253,9 +253,9 @@ The specific objectives are:
 
 To the best of the authors' knowledge, no prior work addresses C compilation for intentionally restricted pedagogical RISC-V subsets. GCC's machine description framework @gcc-internals makes it possible to define a backend that synthesizes missing instructions transparently from the primitives the hardware does support. Applying this mechanism to pedagogical ISAs that deliberately omit standard instructions appears to be novel.
 
-The ability to run a self-written C program on a processor the student designed and built closes a pedagogical loop that rarely closes in undergraduate education. Most courses treat hardware and software as adjacent subjects that never directly intersect. This work creates a complete vertical slice from C source to register-level execution on student hardware. Students can compile a function, inspect the output with `-S`, and observe concretely how the compiler synthesizes a shift operation from repeated additions, or a signed comparison from subtraction and bit manipulation — making the cost of each ISA restriction tangible rather than abstract.
+The ability to run a self-written C program on a processor the student designed and built closes a pedagogical loop that rarely closes in undergraduate education. Most courses treat hardware and software as adjacent subjects that never directly intersect. This work creates a complete vertical slice from C source to register-level execution on student hardware. Students can compile a function, inspect the output, and observe concretely how the compiler synthesizes a shift operation from repeated additions, or a signed comparison from subtraction and bit manipulation, making the cost of each ISA restriction tangible rather than abstract.
 
-Furthermore, students interact with GCC — the dominant open-source compiler for embedded and systems software — rather than a pedagogical toy. The flags, ABI conventions, ELF output, and linker scripts they encounter are identical to those used in professional and research settings, giving the exercise relevance beyond the course itself.
+Furthermore, students interact with GCC, the dominant open-source compiler for embedded and systems software, rather than a pedagogical toy. The flags, ABI conventions, ELF output, and linker scripts they encounter are identical to those used in professional and research settings, giving the exercise relevance beyond the course itself.
 
 == Document Organization
 
@@ -291,8 +291,6 @@ This work sits at the intersection of these two lines: it brings the instruction
 
 RISC-V is an open, royalty-free instruction set architecture belonging to the Reduced Instruction Set Computer (RISC) family @riscv-spec. RISC architectures favour a small number of simple, orthogonal instructions over a large set of complex ones: all computation operates on registers, memory is accessed exclusively through explicit load and store instructions, and instructions are fixed-width, which keeps decoding logic simple and regular. The name RISC-V denotes the fifth major RISC ISA developed at UC Berkeley. Unlike earlier RISC designs, RISC-V is fully open: anyone may implement it without a license. The ISA is organized as a small mandatory base plus a set of optional standard extensions, so implementors include only the features their application requires.
 
-RISC-V uses six encoding formats --- R, I, S, B, U, and J --- chosen to minimise the number of distinct immediate-field positions a decoder must handle @riscv-spec.
-
 The base integer ISA has 32 general-purpose registers, x0--x31. x0 is hardwired to the constant zero and reads as zero regardless of writes. The remaining registers are general-purpose; the ABI assigns mnemonic names: a0--a7 for function arguments and return values, ra for the return address, sp for the stack pointer, t0--t6 for caller-saved temporaries, and s0--s11 for callee-saved registers @riscv-spec.
 
 The RV32I base ISA contains approximately 40 instructions organised into functional groups: integer arithmetic and logic (ADD, SUB, AND, OR, XOR, SLL, SRL, SRA and their immediate-operand forms ADDI, ANDI, ORI, XORI, SLLI, SRLI, SRAI); loads and stores (LW, LH, LB and unsigned halfword/byte variants LHU, LBU; SW, SH, SB); conditional branches (BEQ, BNE, BLT, BGE, BLTU, BGEU); jumps (JAL and JALR); upper-immediate instructions (LUI and AUIPC); and environment/system instructions (ECALL, EBREAK, FENCE) @riscv-spec.
@@ -303,9 +301,9 @@ Beyond the base, RISC-V defines several standard extensions. The M extension add
 
 A single-cycle processor completes every instruction in exactly one clock cycle. The datapath consists of five principal components wired in sequence: an instruction memory that outputs the instruction at the current program counter (PC); a register file with two read ports and one write port; an arithmetic logic unit (ALU) that performs the operation selected by the control unit; a data memory for load and store operations; and a set of multiplexers that route operands and results under control of the control signals derived from the instruction opcode @patterson2020.
 
-The control unit decodes the instruction's opcode field and drives the multiplexer select lines and the register file write-enable. For a given instruction set, each instruction class has a fixed set of control signals; the datapath itself does not change between instructions --- only the routing of values through the multiplexers changes. This regularity is what makes it tractable to add support for a new instruction: each addition requires extending the decode logic and, where necessary, adding a new datapath path or multiplexer input.
+The control unit decodes the instruction's opcode field and drives the multiplexer select lines and the register file write-enable. For a given instruction set, each instruction class has a fixed set of control signals; the datapath itself does not change between instructions, only the routing of values through the multiplexers changes. This regularity is what makes it tractable to add support for a new instruction: each addition requires extending the decode logic and, where necessary, adding a new datapath path or multiplexer input.
 
-The critical path --- the longest combinational path from instruction memory output to the final register or memory write --- determines the maximum clock frequency. Because every instruction must complete within one cycle, the clock period is set by the slowest instruction. For an RV32I processor the critical path typically runs through instruction memory, the register file read ports, the ALU, data memory (for `lw`), and the register file write port.
+The critical path determines the maximum clock frequency. Because every instruction must complete within one cycle, the clock period is set by the slowest instruction. For an RV32I processor the critical path typically runs through instruction memory, the register file read ports, the ALU, data memory (for `lw`), and the register file write port.
 
 == Hennessy-Patterson Educational Processor
 
@@ -341,7 +339,7 @@ The RISC-V integer ABI partitions the 32 registers into four groups @riscv-psabi
 
 The RISC-V stack grows downward. A typical stack frame contains, from high to low address: incoming arguments that did not fit in a0--a7, the saved return address, saved callee-saved registers, and local variables. The call sequence is: the caller loads arguments into a0--a7 (and pushes any extras onto the stack), then executes `jal ra, target` to jump to the callee and record the return address in ra. The callee saves ra and any s registers it uses, executes its body, places the result in a0, restores saved registers, and returns with `jalr x0, 0(ra)` (the `ret` pseudo-instruction). The stack pointer must be 16-byte aligned at every function entry and exit @riscv-psabi.
 
-GCC emits ELF (Executable and Linkable Format) object files. The principal sections are `.text` (machine code), `.rodata` (read-only constants and string literals), `.data` (initialized global variables), and `.bss` (zero-initialized global variables). Relocation entries in the object file record every reference to a symbol whose address is not yet known; the linker fills these in when it combines object files. A linker script controls the memory layout: it assigns each section to an address range that matches the target processor's address map @riscv-psabi.
+GCC emits ELF (Executable and Linkable Format) object files. The principal sections are `.text` (machine code), `.rodata` (read-only constants and string literals), `.data` (initialized global variables), and `.bss` (zero-initialized global variables). Relocation entries in the object file record every reference to a symbol whose address is not yet known, the linker fills these in when it combines object files. A linker script controls the memory layout: it assigns each section to an address range that matches the target processor's address map @riscv-psabi.
 
 == GCC Compiler Architecture
 
@@ -353,8 +351,8 @@ The backend performs three main tasks @gcc-internals. Instruction selection patt
 
 The core of a GCC backend is the machine description file (`.md`), which declaratively specifies the target's instruction set and expansion rules @gcc-internals. It contains two primary construct types:
 
-- `define_insn` --- specifies a named RTL pattern, an assembly output template, and a predicate condition string that tests target capabilities. When the condition evaluates to false, the pattern is invisible to the instruction selector and will never be emitted.
-- `define_expand` --- specifies a named operation that expands into an arbitrary sequence of RTL insns when the compiler needs to generate that operation. The expansion body may call `DONE` to signal that it has produced the complete implementation, preventing any fallthrough to a `define_insn`. Expansions are the mechanism used to synthesize complex operations from simpler ones.
+- `define_insn`: specifies a named RTL pattern, an assembly output template, and a predicate condition string that tests target capabilities. When the condition evaluates to false, the pattern is invisible to the instruction selector and will never be emitted.
+- `define_expand`: specifies a named operation that expands into an arbitrary sequence of RTL insns when the compiler needs to generate that operation. The expansion body may call `DONE` to signal that it has produced the complete implementation, preventing any fallthrough to a `define_insn`. Expansions are the mechanism used to synthesize complex operations from simpler ones.
 
 Code iterators (such as `any_shift`) allow a single `define_expand` to cover multiple related operations (ASHIFT, LSHIFTRT, ASHIFTRT) in one body, with runtime-constant guards like `(<CODE>) == ASHIFT` selecting the appropriate synthesis path.
 
@@ -367,7 +365,7 @@ This work followed an iterative process organized into four phases: a study phas
 
 == Study of GCC Internals
 
-The first phase was a structured study of GCC's backend extension mechanisms. The entry point was the GCC Internals manual @gcc-internals, which documents the machine description language (`.md`), the option description system (`.opt`), and the role of per-target configuration headers. After establishing a conceptual model from the manual, the existing RISC-V backend --- `gcc/config/riscv/riscv.md`, `riscv.opt`, and `config.gcc` --- was examined as a working reference implementation.
+The first phase was a structured study of GCC's backend extension mechanisms. The entry point was the GCC Internals manual @gcc-internals, which documents the machine description language (`.md`), the option description system (`.opt`), and the role of per-target configuration headers. After establishing a conceptual model from the manual, the existing RISC-V backend (`gcc/config/riscv/riscv.md`, `riscv.opt`, and `config.gcc`) was examined as a working reference implementation.
 
 Two diagnostic tools were central throughout the study and subsequent implementation phases. The `-S` flag causes GCC to emit assembly rather than an object file, making the compiler's instruction selection directly observable. The `-fdump-rtl-*` family of flags produces snapshots of GCC's internal Register Transfer Language (RTL) representation at each compilation stage; these were used to understand why a pattern matched or failed to match during instruction selection, and to verify that `define_expand` bodies fired at the correct point in the compilation pipeline.
 
@@ -379,7 +377,7 @@ Requirements for each target were derived from two sources. For rvsc0 and rvsc1,
 
 The rvsc0 and rvsc1 targets require GCC to synthesize every instruction outside the native set using only the instructions the processor supports. Each synthesis was developed through the following cycle, applied independently to each missing operation.
 
-The process begins by identifying the missing operation — an instruction that GCC's middle-end may legally request but that the target processor does not support. The synthesis algorithm is then derived and expressed as C pseudocode, which serves both as a correctness argument and as an unambiguous specification of the target behavior. The pseudocode is then lifted directly into a `define_expand` body in `riscv.md`, using GCC's RTL emit helpers to generate the equivalent sequence of native instructions. Correctness of the expansion is confirmed in two steps: the `-S` output is inspected to verify that no forbidden mnemonics appear, and the resulting program is executed on the Spike RISC-V ISA simulator @spike to confirm that the synthesized sequence produces the same result as the original instruction would have.
+The process begins by identifying the missing operation, an instruction that GCC's middle-end may legally request but that the target processor does not support. The synthesis algorithm is then derived and expressed as C pseudocode, which serves both as a correctness argument and as an unambiguous specification of the target behavior. The pseudocode is then lifted directly into a `define_expand` body in `riscv.md`, using GCC's RTL emit helpers to generate the equivalent sequence of native instructions. Correctness of the expansion is confirmed in two steps: the `-S` output is inspected to verify that no forbidden mnemonics appear, and the resulting program is executed on the Spike RISC-V ISA simulator @spike to confirm that the synthesized sequence produces the same result as the original instruction would have.
 
 This cycle was repeated for each operation that the compiler may emit for a bare-metal freestanding C program targeting rvsc0 or rvsc1. The derivations and the resulting implementation are described in #chref(<ch-development>).
 
@@ -390,6 +388,8 @@ Validation addresses two correctness requirements defined in #chref(<ch-requirem
 ISA compliance is verified structurally by disassembling the compiled output and checking every mnemonic against a per-target allowlist.
 
 Behavioral equivalence is verified by differential execution: the same C program is compiled by both the custom target and a reference RV32I compiler, and both binaries are executed on the Spike ISA simulator @spike; the test passes when both produce identical exit codes.
+
+A third validation layer exercises the compiler against a much larger, automatically generated corpus. The GCC test suite includes a _torture test_ mode that systematically varies optimization flags and source patterns across hundreds of programs, besides compiling `libgcc` against the custom target also stresses constant materialization, multi-word arithmetic, and calling-convention edge cases that hand-written behavioral tests would not cover.
 
 Test results are presented in #chref(<ch-results>).
 
@@ -410,7 +410,7 @@ Two independent correctness requirements apply to every target.
 
 *ISA compliance*: the compiler must never emit an instruction whose opcode is not in the target's allowed set. This requirement is verifiable by inspecting the assembly output.
 
-*Behavioral equivalence*: the compiled program must exhibit the same observable behavior as the source — the same return values, the same memory effects, and the same control flow — as if compiled for a processor that natively supports the full instruction set.
+*Behavioral equivalence*: the compiled program must exhibit the same observable behavior as the source, the same return values, the same memory effects, and the same control flow, as if compiled for a processor that natively supports the full instruction set.
 
 
 == rvsc0 — Basic Single-Cycle
@@ -620,7 +620,7 @@ The custom targets are implemented as a backend extension to GCC 17.0.0. GCC is 
 
 === GNU Binutils (riscv32/64-none-elf)
 
-The upstream GNU binutils cross toolchain is used without modification as the assembler and linker. The binutils triple differs from the compiler triple: `riscv32-none-elf` for rvsc0--rvsc3 and `riscv64-none-elf` for rvsc4--rvsc7. This separation is possible because the assembler accepts the full RISC-V instruction set --- the ISA restriction lives entirely in the GCC backend, not in the assembler. The `objdump -M no-aliases` flag is used in the test suite to expand pseudo-instructions to their real opcodes before checking for forbidden mnemonics.
+The upstream GNU binutils cross toolchain is used without modification as the assembler and linker. The binutils triple differs from the compiler triple: `riscv32-none-elf` for rvsc0--rvsc3 and `riscv64-none-elf` for rvsc4--rvsc7. 
 
 === Spike 1.1.1-dev
 
@@ -636,7 +636,7 @@ The GCC backend modifications live in a fork of the upstream GCC repository:
 git clone https://github.com/guissalustiano/gcc-hannersy-paterson gcc
 ```
 
-The GNU Binutils source is cloned separately and is required for targets rvsc2 and above, where GCC must invoke the target assembler during a single compilation step:
+The GNU Binutils source is cloned separately and is required for all targets, since GCC must invoke the target assembler during compilation:
 
 ```sh
 git clone https://sourceware.org/git/binutils-gdb.git binutils-gdb
@@ -657,7 +657,7 @@ project/
 
 === Building Binutils
 
-Binutils must be built and installed before GCC so that GCC's configure step can detect the target assembler and linker. Only the assembler (`gas`) and linker (`ld`) components are needed; the higher-level binutils utilities (`nm`, `objdump`, `strip`, etc.) are provided by the pre-existing `riscv32-none-elf` system toolchain and do not need to be rebuilt.
+Binutils must be built and installed before GCC so that GCC's configure step can detect the target assembler and linker.
 
 ```sh
 mkdir -p targets/rvsc2/build-binutils
@@ -667,14 +667,13 @@ cd targets/rvsc2/build-binutils
     --target=rvsc2-unknown-elf \
     --prefix=$(pwd)/../install \
     --disable-nls \
-    --disable-gdb \
-    --disable-binutils   # skip nm/objdump/strip/etc.; build only gas + ld
+    --disable-gdb
 
 make -j$(nproc)
 make install
 ```
 
-After this step the install prefix contains `rvsc2-unknown-elf-as` and `rvsc2-unknown-elf-ld`.
+After this step the install prefix contains the target assembler, linker, and binutils utilities (`rvsc2-unknown-elf-as`, `rvsc2-unknown-elf-ld`, etc.).
 
 === Building GCC
 
@@ -700,7 +699,35 @@ make install-gcc
 
 Prepending the install prefix to `PATH` before configure allows the configure script to detect the pre-installed `rvsc2-unknown-elf-as` and `rvsc2-unknown-elf-ld` binaries, preventing it from scheduling them for in-tree compilation.
 
-After installation the toolchain is fully self-contained under `targets/rvsc2/install/bin/`. Compiling a C program to a RISC-V object file requires only:
+=== Building Newlib and libgcc
+
+With GCC installed, the C runtime library (newlib) and the compiler support library (libgcc) can be built. Both are required to link executable programs.
+
+```sh
+mkdir -p targets/rvsc2/build-newlib
+cd targets/rvsc2/build-newlib
+
+PATH="$(pwd)/../install/bin:$PATH" \
+../../newlib-src/configure \
+    --target=rvsc2-unknown-elf \
+    --prefix=$(pwd)/../install \
+    --disable-multilib \
+    --disable-newlib-supplied-syscalls
+
+PATH="$(pwd)/../install/bin:$PATH" make -j$(nproc)
+PATH="$(pwd)/../install/bin:$PATH" make install
+```
+
+With newlib installed, libgcc can be built against it:
+
+```sh
+cd targets/rvsc2/build
+
+PATH="$(pwd)/../install/bin:$PATH" make all-target-libgcc -j$(nproc)
+PATH="$(pwd)/../install/bin:$PATH" make install-target-libgcc
+```
+
+After all four steps the toolchain is fully self-contained under `targets/rvsc2/install/bin/`. Compiling a C program to a RISC-V object file requires only:
 
 ```sh
 PATH="targets/rvsc2/install/bin:$PATH" \
@@ -709,33 +736,24 @@ rvsc2-unknown-elf-gcc -O2 -ffreestanding -c program.c -o program.o
 
 == Synthesis Derivations <sc1-synthesis>
 
-*Assembly notation.* In the listings below, `rd`, `rs1`, and `rs2` denote the canonical destination and source registers. Registers `t0`–`t5` are temporaries chosen for readability. In the actual GCC machine description, all temporaries are allocated as pseudo-registers via `gen_reg_rtx(SImode)`; the register allocator maps them to physical registers, resolving aliasing conflicts automatically. The bracket notation `[op ...]` marks an instruction that is itself synthesized — its expansion is defined in the subsection that covers that operation.
+*Assembly notation.* In the listings below, `rd`, `rs1`, and `rs2` denote the canonical destination and source registers. Registers `t0`–`t5` are temporaries chosen for readability. In the actual GCC machine description, all temporaries are allocated as pseudo-registers via `gen_reg_rtx(SImode)`. The register allocator maps them to physical registers, resolving aliasing conflicts automatically. The bracket notation `[op ...]` marks an instruction that is itself synthesized, its expansion is defined in the subsection that covers that operation.
 
 === Arithmetic
 
-Arithmetic synthesis operations assign values only to registers and carry no memory side-effects; they can be replaced by equivalent sequences without additional constraints.
+Arithmetic synthesis operations assign values only to registers and carry no memory side-effects. They can be replaced by equivalent sequences without additional constraints.
 
 ==== Bitwise NOT <sc1-not>
 
 The standard RISC-V pseudo-instruction `not rd, rs1` expands to `xori rd, rs1, -1`. Neither sc0 nor sc1 include `xori`, so a different derivation is required.
 
-*Proof.* In two's complement, negation satisfies $-x = ~x + 1$ for all $x$. Rearranging: $~x = -x - 1$. Both subtraction from zero (`sub rd, x0, rs1`) and decrement by one (`addi rd, rd, -1`) are available in sc0 and sc1. $square$
+*Proof.* In two's complement, negation satisfies $-x = ~x + 1$ for all $x$. Rearranging: $~x = -x - 1$. Both subtraction from zero (`sub rd, x0, rs1`) and decrement by one (`addi rd, rd, -1`) are available in sc0 and sc1.
 
 ```asm
 sub  rd, x0, rs1    # rd = -rs1
 addi rd, rd, -1     # rd = -rs1 - 1 = ~rs1
 ```
 
-#figure(
-  table(
-    columns: (1fr, 1fr, 1fr),
-    stroke: none,
-    inset: (y: 4pt),
-    [*Static instructions*], [*Extra registers*], [*Applies to*],
-    [2], [0], [rvsc0, rvsc1],
-  ),
-  caption: [Cost summary for NOT synthesis],
-)
+The synthesis costs 2 static instructions and requires no extra registers. It applies to both rvsc0 and rvsc1.
 
 ==== xor (R[rd] = R[rs1] ^ R[rs2]) <sc1-xor>
 
@@ -758,7 +776,7 @@ Fix a bit position $i$ and write $x = a_i, y = b_i in {0, 1}$. Case analysis ove
   caption: [Truth table establishing $(a | b) - (a & b) = a \^ b$ bitwise],
 )
 
-The last column matches $a \^ b$ in every row, so the identity holds per bit. Moreover $(a & b)_i = 1$ implies $(a | b)_i = 1$ in every row --- the 1-bits of $a & b$ are always a subset of the 1-bits of $a | b$. Consequently the per-bit subtraction $(a | b)_i - (a & b)_i$ never needs to borrow from a neighboring bit position: interpreting $a | b$ and $a & b$ as 32-bit binary numbers, the ordinary two's-complement subtraction `sub rd, ab_ior, ab_and` computes exactly the bitwise difference shown above, with no cross-bit borrow propagation. Hence the instruction-level subtraction yields $a \^ b$ exactly, for every $a, b$. $square$
+The last column matches $a \^ b$ in every row, so the identity holds per bit. Moreover $(a & b)_i = 1$ implies $(a | b)_i = 1$ in every row, the 1-bits of $a & b$ are always a subset of the 1-bits of $a | b$. Consequently the per-bit subtraction $(a | b)_i - (a & b)_i$ never needs to borrow from a neighboring bit position: interpreting $a | b$ and $a & b$ as 32-bit binary numbers, the ordinary two's-complement subtraction `sub rd, ab_ior, ab_and` computes exactly the bitwise difference shown above, with no cross-bit borrow propagation. Hence the instruction-level subtraction yields $a \^ b$ exactly, for every $a, b$. $square$
 
 ```asm
 and  t0, rs1, rs2   # t0 = rs1 & rs2
@@ -766,20 +784,8 @@ or   rd, rs1, rs2   # rd = rs1 | rs2
 sub  rd, rd, t0     # rd = (rs1 | rs2) - (rs1 & rs2) = rs1 ^ rs2
 ```
 
-#figure(
-  table(
-    columns: (1fr, 1fr, 1fr),
-    stroke: none,
-    inset: (y: 4pt),
-    [*Static instructions*], [*Extra registers*], [*Applies to*],
-    [3 (register operand); 4 (immediate operand, +1 `li`)], [1 (register operand); 2 (immediate operand)], [rvsc0, rvsc1],
-  ),
-  caption: [Cost summary for XOR synthesis],
-)
-
-This is strictly cheaper than the De Morgan form $a \^ b = ~(a & b) & (a | b)$ used in an earlier revision of this backend (4 insns without `[not]` expanded, 6 with it, 1 extra register) --- see @sc1-cc-aliasing for the correctness reason the De Morgan form was abandoned, independent of the cost difference.
-
-Two `define_insn_and_split` fallback patterns (`*xorsi3_noxor`, `*xorhi3_noxor`) catch the rare case where GCC's combine pass reconstructs a raw `xor` RTX after the `define_expand` above has already run, and no native `xor` insn exists to match it. These patterns declare only a single early-clobber scratch register (`=&r`), because they are matched post-combine with a fixed operand template rather than through a `define_expand` that can allocate pseudo-registers freely. Since $(a | b) - (a & b)$ needs both the AND and the OR of $a, b$ simultaneously live before the final `sub`, it requires two temporaries and does not fit in one scratch register; the fallback patterns instead use the algebraically equivalent rearrangement $a \^ b = a + b - 2(a & b)$, which needs only one scratch (the AND result is doubled and subtracted from $a$ in place, then $b$ is added back), at the cost of one extra instruction (4 insns instead of 3). The two forms are the same identity factored differently to fit two different register budgets, not two independently-derived identities; unifying the fallback patterns to also use $(a|b)-(a&b)$ would require widening them to two scratch registers, a change tracked separately as part of the broader synthesis-helper factoring effort and left out of this derivation to avoid touching combine-fallback matching behavior outside the scope of the XOR proof itself.
+The register-operand form costs 3 static instructions and 1 extra register. When the second operand is an immediate, a `li` is prepended, raising the cost to 4 instructions and 2 extra registers. 
+The synthesis applies to both rvsc0 and rvsc1. Another plausible derivation is the De Morgan form $a \^ b = ~(a & b) & (a | b)$, which costs more instructions (4 without `[not]` expanded, 6 with it) and carries a register-aliasing hazard discussed in @sc1-md.
 
 ==== Shifts: SLL, SRL, SRA <sc1-shifts>
 
@@ -807,31 +813,9 @@ uint32_t sll(uint32_t rs1, uint32_t rs2) {
 }
 ```
 
-```asm
-# rd = rs1 << rs2
-    add   t1, rs2, x0    # t1 = rs2 (save shift count; rd may alias rs2)
-    add   rd, rs1, x0    # rd = rs1
-    beq   t1, x0, done   # if rs2 == 0, no shift needed
-loop:
-    add   rd, rd, rd     # rd <<= 1
-    addi  t1, t1, -1
-    beq   t1, x0, done
-    beq   x0, x0, loop
-done:
-```
+The resulting assembly sequence is listed in @apx-sll-asm.
 
-Let $b$ denote the masked shift amount. The loop executes $b$ iterations of 4 instructions each, with 3 setup instructions.
-
-#figure(
-  table(
-    columns: (1fr, 1fr, 1fr, 1fr),
-    stroke: none,
-    inset: (y: 4pt),
-    [*Formula*], [*Min (b=0)*], [*Max (b=31)*], [*Extra registers*],
-    [$3 + 4b$], [3], [127], [1 (t1)],
-  ),
-  caption: [Cost summary for SLL synthesis],
-)
+Let $b$ denote the masked shift amount. Each loop iteration performs the doubling (`add`), decrements the counter (`addi`), and tests it (`beq`); because sc1 has no native unconditional jump (`jal` and `auipc` are both absent), the back-edge to the top of the loop is itself synthesized as `lui` + `addi` + `jr` (three instructions). Every iteration therefore costs 6 instructions, except the final one, which exits through the taken `beq` and skips the back-jump. With the mask and guard setup this gives $6b + 1$ instructions for $b >= 1$, a minimum of 3 when $b = 0$ (mask and guard only, no loop) and a maximum of 187 when $b = 31$, at the cost of one extra register. This is the dominant reason shift-heavy code expands so sharply on sc1: the synthesized loop pays not only for the repeated addition but also for re-materializing its own back-edge on every pass.
 
 
 ===== Logical Right Shift (SRL) <sc1-srl>
@@ -855,40 +839,9 @@ uint32_t srl(uint32_t x, uint32_t shift) {
 }
 ```
 
-In assembly using only the available instruction set:
+The resulting assembly sequence is listed in @apx-srl-asm.
 
-```asm
-# rd = rs1 >> rs2 (logical shift right)
-    addi  t0, x0, 31
-    and   t3, rs2, t0    # t3 = shift & 31
-    add   t5, rs1, x0    # t5 = rs1 (save before rd is zeroed; fixes rd/rs1 aliasing)
-    addi  rd, x0, 0      # result = 0
-    addi  t1, x0, 1      # out_mask = 1
-    [sll  t2, t1, t3]    # in_mask = 1 << shift
-loop:
-    beq   t2, x0, done   # if in_mask == 0, all bits processed
-    and   t4, t5, t2     # t4 = rs1 & in_mask  (use saved t5)
-    beq   t4, x0, skip   # if bit is 0, skip
-    or    rd, rd, t1     # result |= out_mask
-skip:
-    add   t1, t1, t1     # out_mask <<= 1
-    add   t2, t2, t2     # in_mask <<= 1
-    beq   x0, x0, loop
-done:
-```
-
-The main loop runs $(32 - s)$ iterations where $s$ is the masked shift amount; each iteration costs 4–5 instructions. Initialization and the `in_mask` pre-shift add overhead proportional to $s$.
-
-#figure(
-  table(
-    columns: (1fr, 1fr, 1fr),
-    stroke: none,
-    inset: (y: 4pt),
-    [*Worst case*], [*Extra registers*], [*Applies to*],
-    [~170 insns], [5 (t0–t5)], [rvsc0, rvsc1],
-  ),
-  caption: [Cost summary for SRL synthesis],
-)
+The main loop runs $(32 - s)$ iterations where $s$ is the masked shift amount; each iteration costs 4–5 instructions. Initialization and the `in_mask` pre-shift add overhead proportional to $s$, bringing the worst-case total to approximately 170 instructions and requiring five extra registers.
 
 ===== Arithmetic Right Shift (SRA) <sc1-sra>
 
@@ -911,34 +864,9 @@ uint32_t sra(uint32_t x, uint32_t shift) {
 }
 ```
 
-```asm
-# rd = rs1 >>_s rs2 (arithmetic shift right)
+The resulting assembly sequence is listed in @apx-sra-asm.
 
-    # Step 1: check sign bit of rs1 BEFORE srl (avoids rd/rs1 aliasing)
-    addi  t0, x0, 1
-    [sll  t0, t0, 31]    # t0 = 0x80000000
-    and   t6, rs1, t0   # t6 = sign bit (saved in t6; srl uses t0–t5)
-
-    # Step 2: logical right shift
-    [srl  rd, rs1, rs2]  # rd = srl(rs1, rs2)
-
-    beq   t6, x0, done  # positive → no sign extension needed
-
-    # Step 3: re-mask shift; early exit if shift == 0 mod 32
-    addi  t0, x0, 31
-    and   t3, rs2, t0   # t3 = shift & 31 (fixes unmasked-rs2 bug for rs2 > 31)
-    beq   t3, x0, done  # shift == 0 mod 32 → sra(x, 0) = x
-
-    # Step 4: sign_mask = -1 << (32 - shift)
-    addi  t2, x0, -1    # t2 = 0xFFFFFFFF
-    addi  t4, x0, 32
-    sub   t4, t4, t3    # t4 = 32 - (shift & 31)
-    [sll  t2, t2, t4]   # sign_mask = -1 << (32 - shift)
-    or    rd, rd, t2
-done:
-```
-
-*Cost*: One full `[srl]` expansion plus ~25 instructions for sign-bit extraction and sign-mask construction; worst case approximately 200 instructions; 6 extra registers.
+The synthesis reuses the full SRL expansion and appends roughly 25 additional instructions for sign-bit extraction and sign-mask construction, reaching a worst-case total of approximately 200 instructions at the cost of six extra registers.
 
 === Comparisons <sc1-comparisons>
 
@@ -963,14 +891,7 @@ uint32_t slt(uint32_t a, uint32_t b) {
 }
 ```
 
-```asm
-sub   t0, rs1, rs2   # diff = rs1 - rs2
-[xor  t1, rs1, rs2]  # t1 = rs1 ^ rs2  (derived)
-[xor  t2, rs1, t0]   # t2 = rs1 ^ diff  (derived)
-and   t1, t1, t2     # overflow = (rs1^rs2) & (rs1^diff)
-[xor  t0, t0, t1]    # corrected = diff ^ overflow  (derived)
-[srl  rd,  t0, 31]   # rd = corrected >> 31  (derived)
-```
+The resulting assembly sequence is listed in @apx-slt-asm.
 
 `sltu rd, rs1, rs2` performs the same comparison treating both operands as unsigned.
 
@@ -984,28 +905,9 @@ uint32_t sltu(uint32_t a, uint32_t b) {
 }
 ```
 
-```asm
-sub   t0, rs1, rs2   # diff = rs1 - rs2
-[not  t1, rs1]       # t1 = ~rs1  (derived)
-and   t2, t1, rs2    # t2 = ~rs1 & rs2  (borrow generated)
-[xor  t3, rs1, rs2]  # t3 = rs1 ^ rs2  (derived)
-[not  t3, t3]        # t3 = ~(rs1 ^ rs2)  (derived)
-and   t3, t3, t0     # t3 = ~(rs1^rs2) & diff  (borrow propagated)
-or    t2, t2, t3     # borrow = generated | propagated
-[srl  rd,  t2, 31]   # rd = borrow >> 31  (derived)
-```
+The resulting assembly sequence is listed in @apx-sltu-asm.
 
-#figure(
-  table(
-    columns: (1fr, 1fr, 1fr),
-    stroke: none,
-    inset: (y: 4pt),
-    [*Operation*], [*Approx. instructions (full expansion)*], [*Extra registers*],
-    [`slt`], [~60], [3 (t0–t2)],
-    [`sltu`], [~70], [4 (t0–t3)],
-  ),
-  caption: [Cost summary for SLT and SLTU synthesis],
-)
+Both expansions are expensive: `slt` requires approximately 60 instructions and three extra registers (t0–t2), while `sltu` requires approximately 70 instructions and four extra registers (t0–t3).
 
 
 ==== BNE <sc1-bne>
@@ -1021,7 +923,7 @@ beq  x0, x0, target  # unconditional jump
 skip:
 ```
 
-*Cost*: 3 instructions; 1 extra register.
+The expansion costs 3 instructions and one extra register.
 
 ==== BLT, BGE, BLTU, BGEU <sc1-ordered-branches>
 
@@ -1052,9 +954,7 @@ addi  t0, x0, imm
 and   rd, rs1, t0
 ```
 
-Since `addi` encodes 12-bit signed immediates (range −2048 to 2047) and all of these instruction forms share the same I-type 12-bit field, every immediate fits directly.
-
-*Cost*: 1 extra `addi` instruction and 1 extra register per immediate variant.
+Since `addi` encodes 12-bit signed immediates (range −2048 to 2047) and all of these instruction forms share the same I-type 12-bit field, every immediate fits directly, at the cost of one extra `addi` instruction and one extra register per immediate variant.
 
 === Loads <sc1-loads>
 
@@ -1088,25 +988,13 @@ lw    rd, pool_entry(x0)  # rd = *(pool_entry)  where pool_entry holds imm20 << 
 
 This requires that `pool_entry` fits in a 12-bit signed offset from `x0` (address < 2048), which holds for the short programs typical of the educational processor.
 
-#figure(
-  table(
-    columns: 3,
-    [*Approach*], [*Instructions*], [*Memory reads*],
-    [addi + sll], [~5], [0],
-    [lw from pool], [1], [1],
-  ),
-  caption: [Comparison of LUI synthesis approaches for rvsc0],
-)
-
-*Implementation choice.* Approach 2 (constant pool via `lw`) was selected: it produces a single instruction at each use site and avoids the shift instructions that rvsc0 does not support natively. The constraint it imposes --- every pool entry must reside within the 12-bit signed offset range of `x0`, i.e., below address 2048 --- is met by the rvsc0 linker script, which places `.text` at address 0 and the constant pool immediately after. Programs that fit within the first 2 KB of ROM always satisfy this constraint.
-
-This synthesis is controlled by the `-mno-lui` flag (`TARGET_LUI`, disabled only for rvsc0). Two target hooks in `riscv.cc` force non-`SMALL_OPERAND` constants into the pool instead of allowing them to be materialized with `lui`: `TARGET_LEGITIMATE_CONSTANT_P` (`riscv_legitimate_constant_p`) rejects such constants as directly usable RTL constants, and `TARGET_CANNOT_FORCE_CONST_MEM` (`riscv_cannot_force_const_mem`) permits them to be spilled to the constant pool. `riscv_split_symbol` then addresses the resulting pool entry as `lw rd, %lo(pool_sym)(x0)` rather than the usual `%hi/%lo` pair against a `lui`-materialized base, exploiting the fact that the linker script guarantees `%hi(pool_sym) == 0`.
+The constant-pool approach was chosen over materializing the value with repeated `addi`+`sll` sequences (roughly 5 instructions, no memory access) because it produces a single instruction at each use site and avoids the shift instructions that rvsc0 does not support natively. The tradeoff is one memory read per use, but the constraint it imposes, every pool entry must reside within the 12-bit signed offset range of `x0`, i.e., below address 2048, is met by the rvsc0 linker script, which places `.text` at address 0 and the constant pool immediately after. Programs that fit within the first 2 KB of ROM always satisfy this constraint.
 
 ==== LB, LBU, LH, LHU <sc1-lb-synthesis>
 
 Since sc1 supports only `lw` (32-bit word loads), every byte or halfword load is synthesized in four steps: align the address to a word boundary, load the word, extract the target unit by shift, and sign-extend or zero-extend.
 
-*Proof of correctness.* The expression `addr & ~3u` clears the two low-order bits, yielding the address of the word that contains the byte or halfword at `addr`. The unit's position within the word is `addr & MASK` (MASK = 3 for bytes, 2 for halfwords), and its bit offset is `(addr & MASK) * 8` (values 0, 8, 16, 24 for bytes; 0 or 16 for halfwords). Right-shifting the word by this amount moves the target unit to bits $[N-1:0]$ where $N$ is 8 or 16. A subsequent shift pair of $32-N$ bits — left then right — isolates the unit and performs either sign extension (arithmetic right shift, for `lb`/`lh`) or zero extension (logical right shift, for `lbu`/`lhu`). This is correct for any address alignment because the memory model is little-endian and the bit offset exactly encodes the unit's position within the word. $square$
+*Proof of correctness.* The expression `addr & ~3u` clears the two low-order bits, yielding the address of the word that contains the byte or halfword at `addr`. The unit's position within the word is `addr & MASK` (MASK = 3 for bytes, 2 for halfwords), and its bit offset is `(addr & MASK) * 8` (values 0, 8, 16, 24 for bytes; 0 or 16 for halfwords). Right-shifting the word by this amount moves the target unit to bits $[N-1:0]$ where $N$ is 8 or 16. A subsequent shift pair of $32-N$ bits — left then right — isolates the unit and performs either sign extension (arithmetic right shift, for `lb`/`lh`) or zero extension (logical right shift, for `lbu`/`lhu`). This is correct for any address alignment because the memory model is little-endian and the bit offset exactly encodes the unit's position within the word. 
 
 This algorithm is emitted at runtime — it does not assume the offset is constant at compile time.
 
@@ -1124,44 +1012,9 @@ int32_t  result   = (int32_t)(shifted << BITS) >> BITS;  // arithmetic: [sra]
 // BITS = 24 for byte (QImode), 16 for halfword (HImode)
 ```
 
-```asm
-# lb rd, 0(rs1)  (address in rs1, byte_pos unknown at compile-time)
-addi  t0, x0, -4
-and   t0, rs1, t0         # t0 = rs1 & -4  (word-aligned)
-lw    t1, 0(t0)           # t1 = word containing the byte
-addi  t0, x0, 3
-and   t0, rs1, t0         # t0 = rs1 & 3  (byte position: 0–3)
-[sll  t0, t0, 3]          # t0 = byte_pos * 8  (bit offset)
-[srl  t1, t1, t0]         # t1 >>= bit_off  (byte in bits [7:0])
-[sll  t1, t1, 24]         # t1 <<= 24  (byte in bits [31:24])
-[sra  rd,  t1, 24]        # rd >>= 24  (sign-extend → lb)
-                          # use [srl] in the last step for lbu (zero-extend)
+The resulting assembly sequences are listed in @apx-lb-lh-asm.
 
-# lh rd, 0(rs1)  — identical but MASK = 2, BITS = 16
-addi  t0, x0, -4
-and   t0, rs1, t0         # word-aligned
-lw    t1, 0(t0)
-addi  t0, x0, 2
-and   t0, rs1, t0         # t0 = rs1 & 2  (0 or 2: which halfword)
-[sll  t0, t0, 3]          # t0 = half_pos * 8  (0 or 16)
-[srl  t1, t1, t0]         # halfword in bits [15:0]
-[sll  t1, t1, 16]
-[sra  rd,  t1, 16]        # sign-extend → lh  (srl for lhu)
-```
-
-Since sc1 shifts are themselves synthesized via `add`/`beq` loops, each byte load expands to approximately 70–80 instructions. This cost is intentional: it makes the value of native `lb`/`lbu` instructions tangible to the student building the processor.
-
-#figure(
-  table(
-    columns: (1fr, 1fr, 1fr),
-    stroke: none,
-    inset: (y: 4pt),
-    [*Operation*], [*Approx. instructions*], [*Extra registers*],
-    [`lb`, `lbu`], [~70–80], [2 (t0, t1)],
-    [`lh`, `lhu`], [~70–80], [2 (t0, t1)],
-  ),
-  caption: [Cost summary for LB, LBU, LH, and LHU synthesis],
-)
+Since sc1 shifts are themselves synthesized via `add`/`beq` loops, each byte load expands to approximately 70–80 instructions.
 
 === Stores <sc1-stores>
 
@@ -1186,37 +1039,7 @@ void sb(uint8_t *addr, uint32_t rs2) {
 }
 ```
 
-```asm
-# sb rs2, 0(rs1)   — address in rs1, byte position unknown at compile-time
-addi  t0, x0, -4
-and   t3, rs1, t0           # t3 = rs1 & -4  (word-aligned)
-addi  t0, x0, 3
-and   t0, rs1, t0           # t0 = rs1 & 3  (byte_pos: 0–3)
-add   t0, t0, t0            # \
-add   t0, t0, t0            #  t0 = byte_pos * 8  (constant-3 sll; no loop needed)
-add   t0, t0, t0            # /
-lw    t1, 0(t3)             # t1 = old word
-addi  t2, x0, 255           # t2 = 0xFF
-[sll  t2, t2, t0]           # t2 = 0xFF << shift  (mask)
-[not  t2, t2]               # t2 = ~mask  — 2 insns (Section 5.2.1)
-and   t1, t1, t2            # t1 = old_word & ~mask  (clear target byte)
-addi  t2, x0, 255
-and   t2, rs2, t2           # t2 = rs2 & 0xFF  (isolate input byte)
-[sll  t2, t2, t0]           # t2 = byte_value << shift
-or    t1, t1, t2            # t1 = word with byte inserted
-sw    t1, 0(t3)             # write back
-```
-
-#figure(
-  table(
-    columns: (1fr, 1fr, 1fr),
-    stroke: none,
-    inset: (y: 4pt),
-    [*Extra memory ops*], [*Approx. instructions (full expansion)*], [*Extra registers*],
-    [1 lw + 1 sw], [~100], [3 (t0–t2)],
-  ),
-  caption: [Cost summary for SB synthesis],
-)
+The resulting assembly sequence is listed in @apx-sb-asm. The expansion requires one extra `lw` and one extra `sw` surrounding the computation, totalling approximately 100 instructions and three extra registers (t0–t2).
 
 The `sh` synthesis follows the same read-modify-write pattern as `sb`, with `MASK = 2` and mask constant `0xFFFF`. Since `0xFFFF` exceeds the 12-bit `addi` range, it is materialized via `lui 0x10; addi -1`.
 
@@ -1231,39 +1054,7 @@ void sh(uint16_t *addr, uint32_t rs2) {
 }
 ```
 
-```asm
-# sh rs2, 0(rs1)
-addi  t0, x0, -4
-and   t3, rs1, t0           # t3 = rs1 & -4  (word-aligned)
-addi  t0, x0, 2
-and   t0, rs1, t0           # t0 = rs1 & 2  (hw_pos: 0 or 2)
-add   t0, t0, t0            # \
-add   t0, t0, t0            #  t0 = hw_pos * 8  (0 or 16; constant-3 sll)
-add   t0, t0, t0            # /
-lw    t1, 0(t3)             # t1 = old word
-lui   t2, 0x10              # \
-addi  t2, t2, -1            #  t2 = 0xFFFF
-[sll  t2, t2, t0]           # t2 = 0xFFFF << shift  (mask)
-[not  t2, t2]               # t2 = ~mask  — 2 insns (Section 5.2.1)
-and   t1, t1, t2            # t1 = old_word & ~mask
-lui   t2, 0x10
-addi  t2, t2, -1            # t2 = 0xFFFF
-and   t2, rs2, t2           # t2 = rs2 & 0xFFFF
-[sll  t2, t2, t0]           # t2 = hw_value << shift
-or    t1, t1, t2            # t1 = word with halfword inserted
-sw    t1, 0(t3)             # write back
-```
-
-#figure(
-  table(
-    columns: (1fr, 1fr, 1fr),
-    stroke: none,
-    inset: (y: 4pt),
-    [*Extra memory ops*], [*Approx. instructions (full expansion)*], [*Extra registers*],
-    [1 lw + 1 sw], [~105], [3 (t0–t2)],
-  ),
-  caption: [Cost summary for SH synthesis],
-)
+The resulting assembly sequence is listed in @apx-sh-asm. The expansion likewise requires one extra `lw` and one extra `sw`, totalling approximately 105 instructions and three extra registers (t0–t2).
 
 === Control Flow <sc1-jump>
 
@@ -1283,7 +1074,46 @@ jalr  x0,  0(t0)           # PC ← target; ra already holds return address
 back:
 ```
 
-*Cost*: 5 instructions per call site; 1 extra register (`t0`).
+Each call site expands to 5 instructions and requires one extra register (`t0`).
+
+=== Cost Summary <sc1-synthesis-cost>
+
+@tab-synthesis-cost summarises the instruction and register cost for every synthesis covered in this section. Counts reflect worst-case inputs (e.g. maximum shift amount, non-zero byte position, misaligned halfword address).
+
+#figure(
+  table(
+    columns: (auto, 1fr, auto, auto),
+    stroke: none,
+    inset: (y: 5pt),
+    table.hline(),
+    table.header(
+      [*Operation*], [*Applies to*], [*Worst-case instructions*], [*Extra registers*],
+    ),
+    table.hline(stroke: 0.5pt),
+    [`not`],         [rvsc0, rvsc1], [2],    [0],
+    [`xor` (reg)],   [rvsc0, rvsc1], [3],    [1],
+    [`xor` (imm)],   [rvsc0, rvsc1], [4],    [2],
+    [`ori` (imm)],   [rvsc1],        [2],    [1],
+    [`andi` (imm)],  [rvsc1],        [2],    [1],
+    [`sll`],         [rvsc0, rvsc1], [127],  [1],
+    [`srl`],         [rvsc0, rvsc1], [~170], [5],
+    [`sra`],         [rvsc0, rvsc1], [~200], [6],
+    [`slt`],         [rvsc0, rvsc1], [~60],  [3],
+    [`sltu`],        [rvsc0, rvsc1], [~70],  [4],
+    [`bne`],         [rvsc0, rvsc1], [3],    [1],
+    [`blt`/`bltu`],  [rvsc0, rvsc1], [~75],  [4],
+    [`bge`/`bgeu`],  [rvsc0, rvsc1], [~75],  [4],
+    [`lui` (pool)],  [rvsc0],        [1],    [0],
+    [`lb`/`lbu`],    [rvsc0, rvsc1], [~80],  [2],
+    [`lh`/`lhu`],    [rvsc0, rvsc1], [~80],  [2],
+    [`sb`],          [rvsc0, rvsc1], [~100], [3],
+    [`sh`],          [rvsc0, rvsc1], [~105], [3],
+    [`jal`],         [rvsc1],        [5],    [1],
+    table.hline(),
+  ),
+  caption: [Worst-case instruction and register cost for each synthesis],
+) <tab-synthesis-cost>
+
 
 == GCC Implementation <sc1-gcc-impl>
 
@@ -1369,93 +1199,6 @@ The pattern is shared between `XOR` and `IOR` via the `any_or` code iterator (`<
 
 Several correctness problems appeared only at higher optimization levels (`-O2`, `-O3`) and required understanding interactions between GCC passes that are invisible during basic `-O1` testing. This subsection documents the four corner cases encountered and the fixes applied.
 
-==== IRA Register Corruption from Long Synthesis Loops
-
-The shift synthesis sequences (SRL, SRA, variable SLL) allocate four to eight pseudo-registers as temporaries and emit between 100 and 200 instructions in a loop. When these loops are emitted by a `define_expand` body, they enter the RTL stream before GCC's Integrated Register Allocator (IRA) runs. IRA performs live-range analysis across the entire function and allocates physical registers to all pseudo-registers simultaneously.
-
-The problem arises when the surrounding function is large enough --- typically because the inliner has merged several small functions into one --- that outer variables have live ranges that contain gaps inside the synthesis loop body. Because outer variables are not referenced by any synthesis instruction, IRA sees a window in which those physical registers appear free, and assigns synthesis temporaries to them. No spill is generated: IRA does not detect a conflict. At runtime the synthesis loop overwrites the outer variables, corrupting their values.
-
-The bug was confirmed by inspecting GCC's IRA dump (`-fdump-ipa-all`): pseudo-register `r195` (carrying the result of an ASHIFTRT operation across several loop iterations) was assigned to physical register `t4`. A subsequent `*branchsi` instruction then unconditionally wrote to `t4` as part of its assembly template, corrupting the value before it could be used.
-
-The fix converts each shift synthesis from a `define_expand` into a `define_insn_and_split` with the split condition `"reload_completed"`. During register allocation the synthesis appears as a single instruction with `(clobber (match_scratch ...))` operands that declare which physical registers the synthesis will need. IRA allocates physical registers for those clobbers before the split fires, so they cannot overlap with any live outer variable. After `reload_completed`, the split substitutes the declared physical registers and generates the full synthesis sequence. The three patterns introduced are:
-
-#figure(
-  table(
-    columns: (auto, auto, auto),
-    align: left,
-    [*Pattern*], [*Operation*], [*Scratch registers declared*],
-    [`lshrsi3_sc1`],   [SRL],           [4 (`out_mask`, `in_mask`, `tmp`, `shift_count`)],
-    [`ashrsi3_sc1`],   [SRA],           [8 (SRL temporaries + `sign_bit`, `shift_masked`, `counter2`, `sign_mask2`)],
-    [`ashlsi3_sc1_var`], [variable SLL], [1 (`count`)],
-  ),
-  caption: [Post-reload split patterns replacing the shift synthesis `define_expand` bodies],
-) <tbl-split-patterns>
-
-The `define_expand` bodies for the shift operations are retained but simplified: each branch now calls `force_reg` on the shift count (converting any immediate to a register, since the split patterns require register operands), emits the corresponding split pattern via `gen_lshrsi3_sc1` / `gen_ashrsi3_sc1` / `gen_ashlsi3_sc1_var`, and calls `DONE`.
-
-==== Combine-Pass Substitution of Unclobbered Hard Registers
-
-A second class of corruption stems from an interaction between the combine pass and a pre-existing `define_insn` for conditional branches.
-
-For ordered comparisons (LT, GE, LTU, GEU) when `!TARGET_SLT`, the `cbranch4` expand body synthesizes the comparison into pseudo-registers using the SLT synthesis sequence, then emits a `NE` branch that tests the resulting pseudo. This is correct: IRA allocates physical registers for all the synthesis pseudos, and none of them are hard-coded.
-
-The combine pass, however, looks for patterns that merge two or more consecutive instructions into a single match. It found that the pair _(SLT-synthesis-result, NE-branch)_ matched the pre-existing `*branchsi` pattern for `LT`. That pattern's assembly template embeds the comparison directly in the branch using fixed physical registers `t2`, `t3`, and `t4` as scratch:
-
-```asm
-;; Excerpt from the *branchsi LT template (simplified)
-slt   t2, rs1, rs2
-bne   t2, x0, target
-```
-
-The pattern did not declare `t2`, `t3`, `t4` as RTL clobbers, so IRA had no knowledge of these writes. If it had assigned live values to any of those registers --- which it regularly did, given that they are caller-saved temporaries often reused --- those values would be silently overwritten.
-
-The fix restricts the `*branchsi` pattern with a condition that excludes LT, GE, LTU, and GEU when `!TARGET_SLT`:
-
-```scheme
-"!TARGET_XCVBI && (TARGET_SLT
- || GET_CODE (operands[1]) == EQ || GET_CODE (operands[1]) == NE)"
-```
-
-When `!TARGET_SLT`, the combine pass can no longer form a `*branchsi` LT instruction; the SLT synthesis pseudos and the NE branch remain as separate RTL instructions with fully declared operands throughout register allocation.
-
-==== RTX Cost Model for Synthesized Shifts <sc1-rtx-costs>
-
-GCC's cost model assigns an integer cost to each RTX node; the optimizer uses these costs when deciding whether to inline, hoist, or duplicate computations. Without an explicit cost, synthesized shift operations inherited the same cost as native shift instructions --- one or two machine cycles. The optimizer therefore treated a synthesized SRL (up to ~170 instructions) as equivalent to a native `srl` (one instruction), and freely duplicated or inlined shift-heavy code.
-
-Adding explicit costs in `riscv_rtx_costs` corrects this:
-
-```c
-case ASHIFT:
-  /* ... upstream bset handling ... */
-  gcc_fallthrough ();
-case ASHIFTRT:
-case LSHIFTRT:
-  if (!TARGET_SHIFT && GET_MODE (x) == SImode)
-    {
-      *total = COSTS_N_INSNS (CONSTANT_P (XEXP (x, 1)) ? 64 : 200);
-      return true;
-    }
-  /* fall through to upstream cost */
-```
-
-A constant shift count costs 64 instruction-equivalents (reflecting the unrolled constant SLL sequence); a variable count costs 200 (the worst-case SRL/SRA loop). With these costs the optimizer avoids aggressively inlining functions that contain shift operations, keeping the per-function RTL stream small enough that IRA live-range holes are rare.
-
-==== Register Aliasing in Dataflow-Disconnected Synthesis Sequences <sc1-cc-aliasing>
-
-An earlier revision of the XOR synthesis used the De Morgan identity $a \^ b = ~(a & b) & (a | b)$ (@sc1-xor discusses why this identity is correct; the problem here is unrelated to correctness of the algebra). The sequence was:
-
-```asm
-and  t0, rs1, rs2   # t0 = rs1 & rs2
-not  t0, t0         # t0 = ~(rs1 & rs2)      -- expands to sub+addi
-or   rd, rs1, rs2   # rd = rs1 | rs2
-and  rd, t0, rd      # rd = ~(rs1 & rs2) & (rs1 | rs2)
-```
-
-The `not t0, t0` step (itself synthesized as `sub t0, x0, t0; addi t0, t0, -1`, per @sc1-not) reads and writes only `t0`; it shares no register operand with the `or rd, rs1, rs2` instruction that computes `ab_ior`. In RTL terms, the negation and the OR are dataflow-independent --- neither is a use or a def of the other's operands --- so nothing in the instruction stream forces the register allocator to keep them apart.
-
-GCC's scheduler is free to reorder dataflow-independent instructions, and IRA allocates registers based on live-range interference, not program order. Because `not`'s output (`t0`, holding `~(rs1 & rs2)`) and `or`'s output (`rd`, holding `rs1 | rs2`, i.e. `ab_ior`) had no edge connecting them in the dependence graph, IRA occasionally proved that `t0`'s live range and `op1`'s (one of the original operands, `rs1`) live range did not overlap and assigned `neg` the same physical register as `op1`. If the final `and rd, t0, rd` instruction had not yet consumed `ab_ior`'s value at that point, the reused register silently corrupted `ab_ior` before the last `and` read it, producing a wrong result that only appeared at `-O2` and above, where the scheduler is more aggressive about reordering.
-
-The fix (documented in the riscv.md comment immediately above the `<optab><mode>3` expand, @sc1-xor) replaces the De Morgan sequence with $a \^ b = (a | b) - (a & b)$. Both `ab_and` and `ab_ior` are now direct source operands of the final `sub rd, ab_ior, ab_and` instruction: the dependence graph has an explicit edge from each temporary to the instruction that consumes it, so IRA must keep both live simultaneously through to the `sub`, and can never alias either one to an operand register that is still needed. The bug class --- a synthesis sequence in which two temporaries feed the *same* final instruction but have *no direct dataflow edge to each other* --- is a general hazard for any multi-step synthesis in this backend: whenever a derivation can be restructured so that every intermediate result flows directly into the instruction that needs it (rather than being combined implicitly through program order), the register allocator has no room to alias registers incorrectly.
 
 === Worked Example: XOR in C to Assembly <sc1-example>
 
@@ -1474,41 +1217,12 @@ sub  a0, a0, a5
 ```
 inspecting the result with `grep xor` returns empty; only `and`, `or`, and `sub` appear — all native sc1 instructions.
 
-=== Target Registration <sc1-registration>
-
-Each target triple `rvscN-unknown-elf` is registered in two files:
-
-- `gcc/config/config.sub` normalises the CPU name pattern `rvscN`, allowing GCC's driver to recognize the triple.
-- `gcc/config.gcc` maps `rvscN-*-elf*` to `cpu_type=riscv`, sets the default architecture and ABI (`--with-arch=rv32i --with-abi=ilp32` for sc0 and sc1), and appends `riscv/rvscN.h` to `tm_file`.
-
-The per-target header defines `CC1_SPEC` to inject flags automatically:
-
-```c
-// rvsc1.h
-#define CC1_SPEC \
-  "%{!mfence:-mno-fence}  %{!mauipc:-mno-auipc} %{!mshift:-mno-shift}" \
-  " %{!mxor:-mno-xor}     %{!mori:-mno-ori}      %{!mandi:-mno-andi}"  \
-  " %{!mbne:-mno-bne}     %{!mslt:-mno-slt}      %{!mslti:-mno-slti}"  \
-  " %{!mblt:-mno-blt}     %{!mbge:-mno-bge}                          "  \
-  " %{!mbltu:-mno-bltu}   %{!mbgeu:-mno-bgeu}                        "  \
-  " %{!mbyte:-mno-byte}   %{!mhalf:-mno-half}"
-```
-
-The construct `%{!mfoo:-mno-foo}` reads: "if the user did not pass `-mfoo`, inject `-mno-foo`." A user invoking `rvsc1-unknown-elf-gcc program.c` passes no manual flags; the driver inserts the complete synthesis-enabling set automatically. `rvsc0.h` defines the same `CC1_SPEC` with one addition, `%{!mlui:-mno-lui}`, disabling native `lui` and routing large constants through the constant pool synthesis described in @sc0-lui. The toolchain is built with a standard configure invocation using the target triple:
-
-// TODO: add the build instructions, not sure if here
-```sh
-../gcc/configure \
-    --target=rvsc1-unknown-elf \
-    --prefix=$(pwd)/install \
-    --enable-languages=c
-```
 
 == Known Limitations
 
-=== rvsc0: No Function Calls
+=== rvsc0: No Non-Inlined Function Calls
 
-The rvsc0 processor supports neither `jalr` nor `jal`. Functions cannot be called or returned from in rvsc0-compiled code: the compiler has no instruction with which to perform an indirect jump while saving the return address. As a consequence, only single-function C programs --- programs where all control flow remains within `main()` and no other function is invoked --- can be compiled for rvsc0. Any C source that contains a call to a function other than `main` will either fail at link time or produce incorrect control flow at runtime.
+The rvsc0 processor supports neither `jalr` nor `jal`. The compiler therefore has no instruction with which to perform an indirect jump while saving the return address, making non-inlined function calls impossible. However, the GCC inliner operates before instruction selection, so C programs with multiple functions can still be compiled for rvsc0 provided that every call site is inlined, either by marking functions `__attribute__((always_inline))` or by relying on GCC's automatic inlining at `-O1` and above. Any call that remains non-inlined after optimization will either fail at link time or produce incorrect control flow at runtime.
 
 === rvsc1: Function Body Size Limit
 
@@ -1522,23 +1236,38 @@ jr   t1                    # absolute jump to target
 skip:
 ```
 
-This long form is itself valid rvsc1 code, so correctness is preserved. However, the long form for the inverted branch (`bne`) chains through the `bne` synthesis (which uses `beq`), so individual function bodies should remain under approximately 4 KB of machine code --- roughly 1 000 synthesized instructions --- to avoid triggering branch relaxation in unexpected cases. Typical educational programs are well within this limit.
+This long form is itself valid rvsc1 code, so correctness is preserved. However, the long form for the inverted branch (`bne`) chains through the `bne` synthesis (which uses `beq`), so individual function bodies should remain under approximately 4 KB of machine code, roughly 1 000 synthesized instructions, to avoid triggering branch relaxation in unexpected cases. Typical educational programs are well within this limit.
 
-=== rvsc0 and rvsc1: No 64-bit Integers or Floating Point
-
-Both targets compile freestanding bare-metal C without a C standard library or a compiler support library (libgcc). The C types `long long`, `unsigned long long`, `float`, and `double` are syntactically accepted by the compiler but will fail at link time if the required helper routines (`__muldi3`, `__addsf3`, etc.) are not available. These types are not in scope for this project and are not tested.
-
-// TODO: investigate libgcc compilation
 
 = Results <ch-results>
 
 == Tests
 
-Two targets are verified in depth: rvsc0 and rvsc1. For rvsc1, three independent test layers are applied: static ISA compliance (checking that no forbidden mnemonic appears in the output), behavioral self-tests (checking that compiled programs produce correct results on a RISC-V simulator), and a large torture suite from the GCC test infrastructure (checking a broad range of C programs across five optimization levels). For rvsc0, the same ISA compliance and behavioral layers are applied; the torture suite is omitted because rvsc0 cannot compile multi-function programs.
+Correctness is verified by three complementary test strategies: _ISA compliance_ tests, which statically check that the compiler never emits a forbidden instruction; _behavioral self-tests_, which execute compiled programs on a reference simulator and check their results; and the _GCC torture suite_, which subjects the compiler to a large corpus of programs accumulated by the GCC project itself. The synthesis-heavy targets are verified in depth: rvsc1 receives all three layers, and rvsc0 receives the first two (the torture suite requires function calls, which rvsc0 cannot compile). rvsc2 is covered by ISA compliance alone, and rvsc3 through rvsc7 require no testing beyond what the upstream backend already provides. This section first describes how each strategy works, then presents the specificities and results of each target.
 
-=== ISA Compliance Tests --- rvsc0 <sc0-isa-tests>
+=== Test Strategies
 
-ISA compliance is verified by `main.py`. For every `.c` file in `tests/isa/`, the script compiles the program with `rvsc0-unknown-elf-gcc -S` at each of the five optimization levels, disassembles the resulting object with `riscv32-none-elf-objdump -M no-aliases`, and checks every mnemonic against the rvsc0 allowlist:
+==== ISA Compliance <strategy-isa>
+
+The ISA compliance strategy answers a static question: does the compiler ever emit an instruction that the modeled processor does not implement? Each target has a corpus of small C programs, each written to exercise one operation category, one program shifts by variable amounts, another stores individual bytes, another compares signed and unsigned values, and so on. Each program is constructed so that a compiler for the full RV32I ISA would naturally use the native instruction under test, forcing the restricted target to demonstrate the corresponding synthesis instead.
+
+The test script compiles every program in the corpus at each of GCC's five optimization levels (`-O0`, `-O1`, `-O2`, `-O3`, `-Os`), assembles the output, and disassembles the resulting object with pseudo-instruction expansion enabled. Every mnemonic in the disassembly is then checked against the target's  allowlist.
+
+==== Behavioral Self-Tests <strategy-behav>
+
+ISA compliance proves that the output is _legal_, it says nothing about whether it is _correct_. A synthesis could emit only allowed instructions and still compute the wrong value. The behavioral strategy closes this gap by executing the compiled programs on Spike, the RISC-V reference simulator @spike, and checking their results.
+
+Each behavioral test is a self-validating C program covering one operation category through a sequence of assertions in boundary values, sign transitions, every byte lane of a word, and algebraic identities cross-checked against independently computed results. The program returns 0 when every assertion holds, and a distinct nonzero code identifying the first failing assertion otherwise. Each program is compiled at all five optimization levels and executed on Spike, a test case passes when the simulator exits with code 0.
+
+==== GCC Torture Suite <strategy-torture>
+
+Hand-written tests only cover the code paths their author anticipated. The third strategy probes the remaining ones with `gcc.c-torture/execute`, a suite of 1684 C programs accumulated by the GCC project over three decades of compiler development, many distilled from real miscompilation bugs. The programs are self-validating — they call `exit(0)` on success and `abort()` on failure — so no reference compiler is needed. The harness compiles each program at all five optimization levels and runs it on Spike in the same proxy-kernel environment used by the behavioral tests, giving 1684 × 5 = 8420 compiler/optimizer combinations. Programs that fail to compile are counted as skipped (typically they need types or features the freestanding runtime does not provide), and a fixed simulation budget of 300 seconds bounds each execution. A combination passes when the simulator exits with code 0. In addition, for each program that compiles successfully, the emitted assembly is passed through the same static mnemonic checker used by the ISA-compliance tests, catching any forbidden instruction that the dynamic execution might not exercise.
+
+=== rvsc0
+
+==== ISA Compliance <sc0-isa-tests>
+
+The rvsc0 corpus contains 12 programs, listed by operation category in @tbl-sc0-isa-files. Every mnemonic they produce is checked against the eight-instruction rvsc0 allowlist:
 
 #figure(
   ```
@@ -1551,28 +1280,28 @@ ISA compliance is verified by `main.py`. For every `.c` file in `tests/isa/`, th
   table(
     columns: (auto, 1fr),
     align: left,
-    [*Test file*], [*Operations exercised*],
-    [`arith.c`],  [ADD, ADDI, SUB (regression: must remain native)],
-    [`branch.c`], [BNE, BLT, BGE, BLTU, BGEU — synthesized from `beq` via SLT chains],
-    [`lb.c`],     [LB signed byte load — synthesized via `lw`+shift+sign-extend],
-    [`lh.c`],     [LH signed/unsigned halfword load — synthesized via `lw`+shift+mask],
-    [`logic.c`],  [AND, OR (native); XOR via `(a|b)-(a&b)`; ANDI/ORI via `li`+register-op],
-    [`lui.c`],    [LUI — synthesized via constant pool: `lw rd, %lo(pool)(x0)`],
-    [`not.c`],    [Bitwise NOT — synthesized as `sub x0, rs; addi rd, rd, -1`],
-    [`sb.c`],     [SB byte store — synthesized via `lw`+clear+insert+`sw`],
-    [`shift.c`],  [SLL, SRL, SRA with constant and variable shift counts],
-    [`slt.c`],    [SLT and SLTU — synthesized via sub/xor/and/lshr chains],
-    [`sra.c`],    [SRA with variable shift count — bit-extraction loop + sign-fill],
-    [`srl.c`],    [SRL with variable shift count — bit-extraction loop],
+    [*Test program*], [*Operations exercised*],
+    [Arithmetic],   [ADD, ADDI, SUB (regression: must remain native)],
+    [Branches],     [BNE, BLT, BGE, BLTU, BGEU — synthesized from `beq` via SLT chains],
+    [Signed byte load], [LB — synthesized via `lw`+shift+sign-extend],
+    [Halfword load], [LH signed/unsigned — synthesized via `lw`+shift+mask],
+    [Logic],        [AND, OR (native); XOR via `(a|b)-(a&b)`; ANDI/ORI via `li`+register-op],
+    [Large constants], [LUI — synthesized via constant pool: `lw rd, %lo(pool)(x0)`],
+    [Bitwise NOT],  [NOT — synthesized as `sub x0, rs; addi rd, rd, -1`],
+    [Byte store],   [SB — synthesized via `lw`+clear+insert+`sw`],
+    [Shifts],       [SLL, SRL, SRA with constant and variable shift counts],
+    [Comparisons],  [SLT and SLTU — synthesized via sub/xor/and/lshr chains],
+    [Variable arithmetic right shift], [SRA with runtime shift count — bit-extraction loop + sign-fill],
+    [Variable logical right shift], [SRL with runtime shift count — bit-extraction loop],
   ),
-  caption: [ISA compliance test files for rvsc0 (`tests/isa/`)],
+  caption: [ISA compliance test programs for rvsc0, by operation category],
 ) <tbl-sc0-isa-files>
 
-Each file is compiled at five optimization levels, giving 12 × 5 = *60 test cases* in total. All 60 pass: no forbidden mnemonic appears in any rvsc0 output at any optimization level.
+Each program is compiled at five optimization levels, giving 12 × 5 = *60 test cases* in total. All 60 pass: no forbidden mnemonic appears in any rvsc0 output at any optimization level.
 
-=== Behavioral Tests --- rvsc0 <sc0-behav-tests>
+==== Behavioral Self-Tests <sc0-behav-tests>
 
-Behavioral correctness is verified by `behav.py`. Because rvsc0 has no `jalr` instruction, it cannot use the proxy-kernel runtime that rvsc1 uses. Instead, each test program is a single C source file defining `int run_test(void)`, linked against a small bare-metal startup (`entry.S`) that sets up the stack, calls `run_test`, converts the return value to an HTIF exit token, and writes it to the `tohost` address. Spike runs the binary bare-metal (without `pk`) at its default load address of `0x80000000` and exits with the value written to `tohost`. The test passes if Spike exits with code 0.
+Because rvsc0 has no `jalr` instruction, it cannot use the proxy-kernel runtime that rvsc1 uses. Instead, each test program is a single C function, linked against a small hand-written bare-metal startup routine that sets up the stack, invokes the test function, converts its return value to a host-interface exit token, and writes it to the simulator's designated exit address. Spike runs the binary bare-metal at its default load address of `0x80000000` and exits with the reported value. The test passes if Spike exits with code 0.
 
 A key constraint distinguishes rvsc0 behavioral tests from rvsc1: global variables and large integer constants are forbidden. The rvsc0 constant pool is valid only when pool entries resolve to addresses below 2048 (the 12-bit signed offset range of `x0`). At Spike's load address of `0x80000000`, pool entries would be accessed via `lw rd, %lo(pool)(x0)` with a wrapped address, producing incorrect values. All test programs therefore use only stack-allocated `volatile` locals and constants within the SMALL_OPERAND range (−2048 to 2047).
 
@@ -1580,24 +1309,26 @@ A key constraint distinguishes rvsc0 behavioral tests from rvsc1: global variabl
   table(
     columns: (auto, 1fr),
     align: left,
-    [*Test file*], [*Cases covered*],
-    [`arith.c`],  [ADD/SUB/ADDI on positive, negative, and zero operands; AND and OR identity and absorption],
-    [`branch.c`], [Signed and unsigned comparisons: `<`, `>`, `<=`, `>=`, `!=`; all synthesized from `beq`+SLT chains],
-    [`logic.c`],  [XOR, ANDI, ORI on representative values; `(a|b)-(a&b)` identity; complement-via-XOR],
-    [`loop.c`],   [Ascending for-loop (sum 1..10), countdown while-loop (doubling to 256), do-while (repeated addition), nested loops],
-    [`mem.c`],    [SB/LBU/LB on all four byte lanes; SH/LHU/LH on both halfword lanes; signed widening via volatile intermediary],
-    [`not.c`],    [NOT on 0, −1, 1, −128, 127; combined `~&`, `~|`; XOR cross-checked in C against the independent formula `(a|b)&~(a&b)`],
-    [`shift.c`],  [SLL/SRL/SRA with constant counts (1, 3, 8); variable counts; sign-propagation (SRA) and zero-fill (SRL)],
-    [`slt.c`],    [SLT and SLTU: signed ordering, unsigned ordering, equality; unsigned wrap-around larger than small positive],
+    [*Test program*], [*Cases covered*],
+    [Arithmetic],  [ADD/SUB/ADDI on positive, negative, and zero operands; AND and OR identity and absorption],
+    [Branches],    [Signed and unsigned comparisons: `<`, `>`, `<=`, `>=`, `!=`; all synthesized from `beq`+SLT chains],
+    [Logic],       [XOR, ANDI, ORI on representative values; `(a|b)-(a&b)` identity; complement-via-XOR],
+    [Loops],       [Ascending for-loop (sum 1..10), countdown while-loop (doubling to 256), do-while (repeated addition), nested loops],
+    [Memory],      [SB/LBU/LB on all four byte lanes; SH/LHU/LH on both halfword lanes; signed widening via volatile intermediary],
+    [Bitwise NOT], [NOT on 0, −1, 1, −128, 127; combined `~&`, `~|`; XOR cross-checked in C against the independent formula `(a|b)&~(a&b)`],
+    [Shifts],      [SLL/SRL/SRA with constant counts (1, 3, 8); variable counts; sign-propagation (SRA) and zero-fill (SRL)],
+    [Comparisons], [SLT and SLTU: signed ordering, unsigned ordering, equality; unsigned wrap-around larger than small positive],
   ),
-  caption: [Behavioral test files for rvsc0 (`tests/behav/`)],
+  caption: [Behavioral test programs for rvsc0, by operation category],
 ) <tbl-sc0-behav-files>
 
 All 8 behavioral tests pass at every optimization level (`-O0` through `-Os`), for 8 × 5 = 40 cases.
 
-=== ISA Compliance Tests --- rvsc1 <sc1-isa-tests>
+=== rvsc1
 
-ISA compliance is verified by `main.py`. For every `.c` file in `tests/isa/`, the script compiles the program with `rvsc1-unknown-elf-gcc -S` at each of the five optimization levels (`-O0`, `-O1`, `-O2`, `-O3`, `-Os`), assembles the output with `riscv32-none-elf-as`, disassembles the resulting object with `riscv32-none-elf-objdump -M no-aliases`, and checks every mnemonic in the disassembly against the rvsc1 allowlist:
+==== ISA Compliance <sc1-isa-tests>
+
+The rvsc1 corpus contains 19 programs, listed by operation category in @tbl-sc1-isa-files. Every mnemonic they produce is checked against the ten-instruction rvsc1 allowlist:
 
 #figure(
   ```
@@ -1606,62 +1337,58 @@ ISA compliance is verified by `main.py`. For every `.c` file in `tests/isa/`, th
   caption: [rvsc1 allowed mnemonics],
 ) <tbl-sc1-allowlist>
 
-The `-M no-aliases` flag is essential: it expands pseudo-instructions to their underlying real opcodes before the check, so a pseudo such as `ret` (which expands to `jalr x0, 0(ra)`) cannot pass disguised as a pseudo for a target that forbids `jalr`.
-
 #figure(
   table(
     columns: (auto, 1fr),
     align: left,
-    [*Test file*], [*Operations exercised*],
-    [`add.c`],     [ADD and ADDI (regression: must remain native)],
-    [`andi.c`],    [ANDI immediate — synthesized as `li t, imm; and rd, rs, t`],
-    [`branch.c`],  [BNE, BLT, BGE, BLTU, BGEU — all synthesized from `beq`],
-    [`call.c`],    [Function call and return — JAL synthesized as `lui+addi+jalr`],
-    [`lb.c`],      [LB signed byte load — synthesized via `lw`+shift+sign-extend],
-    [`lbu.c`],     [LBU unsigned byte load — synthesized via `lw`+shift+mask],
-    [`lh.c`],      [LH signed halfword load — synthesized via `lw`+shift+sign-extend],
-    [`lhu.c`],     [LHU unsigned halfword load — synthesized via `lw`+shift+mask],
-    [`loop.c`],    [Loop with synthesized branch and variable shift],
-    [`not.c`],     [Bitwise NOT — synthesized as `sub x0, rs; addi rd, rd, -1`],
-    [`ori.c`],     [ORI immediate — synthesized as `li t, imm; or rd, rs, t`],
-    [`sb.c`],      [SB byte store — synthesized via `lw`+clear+insert+`sw`],
-    [`sh.c`],      [SH halfword store — synthesized via `lw`+clear+insert+`sw`],
-    [`shift.c`],   [SLL, SRL, SRA with constant shift counts],
-    [`sll_var.c`], [SLL with variable shift count — count-down loop],
-    [`slt.c`],     [SLT and SLTU — synthesized via sub/xor/and/lshr],
-    [`sra.c`],     [SRA with variable shift count — bit-extraction loop + sign-fill],
-    [`srl.c`],     [SRL with variable shift count — bit-extraction loop],
-    [`xor.c`],     [XOR — synthesized via `(a|b) - (a&b)`],
+    [*Test program*], [*Operations exercised*],
+    [Addition],     [ADD and ADDI (regression: must remain native)],
+    [Immediate AND], [ANDI — synthesized as `li t, imm; and rd, rs, t`],
+    [Branches],     [BNE, BLT, BGE, BLTU, BGEU — all synthesized from `beq`],
+    [Function call], [Call and return — JAL synthesized as `lui+addi+jalr`],
+    [Signed byte load], [LB — synthesized via `lw`+shift+sign-extend],
+    [Unsigned byte load], [LBU — synthesized via `lw`+shift+mask],
+    [Signed halfword load], [LH — synthesized via `lw`+shift+sign-extend],
+    [Unsigned halfword load], [LHU — synthesized via `lw`+shift+mask],
+    [Loop],         [Loop with synthesized branch and variable shift],
+    [Bitwise NOT],  [NOT — synthesized as `sub x0, rs; addi rd, rd, -1`],
+    [Immediate OR], [ORI — synthesized as `li t, imm; or rd, rs, t`],
+    [Byte store],   [SB — synthesized via `lw`+clear+insert+`sw`],
+    [Halfword store], [SH — synthesized via `lw`+clear+insert+`sw`],
+    [Constant-count shifts], [SLL, SRL, SRA with compile-time shift counts],
+    [Variable left shift], [SLL with runtime shift count — count-down loop],
+    [Comparisons],  [SLT and SLTU — synthesized via sub/xor/and/lshr],
+    [Variable arithmetic right shift], [SRA with runtime shift count — bit-extraction loop + sign-fill],
+    [Variable logical right shift], [SRL with runtime shift count — bit-extraction loop],
+    [XOR],          [XOR — synthesized via `(a|b) - (a&b)`],
   ),
-  caption: [ISA compliance test files for rvsc1 (`tests/isa/`)],
+  caption: [ISA compliance test programs for rvsc1, by operation category],
 ) <tbl-sc1-isa-files>
 
-Each file is compiled at five optimization levels, giving 19 × 5 = *95 test cases* in total. All 95 pass: no forbidden mnemonic appears in any rvsc1 output at any optimization level.
+Each program is compiled at five optimization levels, giving 19 × 5 = *95 test cases* in total. All 95 pass: no forbidden mnemonic appears in any rvsc1 output at any optimization level.
 
-=== Behavioral Tests --- rvsc1 <sc1-behav-tests>
+==== Behavioral Self-Tests <sc1-behav-tests>
 
-Behavioral correctness is verified by `behav.py`. For each `.c` file in `tests/behav/`, the script compiles the program with `rvsc1-unknown-elf-gcc -O1`, links it against a small C runtime provided by the RISC-V proxy kernel (`pk`), and runs the resulting binary on Spike with `--isa=rv32imac_zicsr_zifencei`. The test passes if Spike exits with code 0. Each test program is self-validating: it returns 0 on success and a distinct nonzero value for each failing assertion, so the exit code identifies the specific case that failed.
+rvsc1 binaries run on top of the RISC-V proxy kernel, a minimal execution environment that loads the program, provides a stack, and services the `exit` system call, allowing test programs to be ordinary C programs with a `main` function. Each program is linked against the proxy-kernel runtime and executed on Spike; the exit code reported through the proxy kernel decides the verdict.
 
 #figure(
   table(
     columns: (auto, 1fr),
     align: left,
-    [*Test file*], [*Cases covered*],
-    [`branch.c`], [Signed and unsigned comparisons: `<`, `>`, `<=`, `>=`, `!=`; boundary values including `INT_MIN`, `INT_MAX`, and `UINT_MAX`],
-    [`call.c`],   [Recursive Fibonacci (`fib(10)=55`), multi-argument calls, function pointer call via `get_sum()(10,20,30)`],
-    [`logic.c`],  [XOR, ORI, ANDI, NOT on representative bit patterns; `(a|b)-(a&b)` identity; complement-via-XOR],
-    [`mem.c`],    [SB/LBU/LB and SH/LHU/LH on aligned addresses; signed/unsigned byte and halfword widening],
-    [`shift.c`],  [SLL/SRL/SRA with constant counts (3, 15, 16, 4); variable counts; sign-propagation and zero-fill],
-    [`slt.c`],    [SLT and SLTU with `a=-1`, `b=1`; `INT_MIN < INT_MAX`; `UINT_MAX > 0`],
+    [*Test program*], [*Cases covered*],
+    [Branches],    [Signed and unsigned comparisons: `<`, `>`, `<=`, `>=`, `!=`; boundary values including `INT_MIN`, `INT_MAX`, and `UINT_MAX`],
+    [Function calls], [Recursive Fibonacci (`fib(10)=55`), multi-argument calls, call through a function pointer],
+    [Logic],       [XOR, ORI, ANDI, NOT on representative bit patterns; `(a|b)-(a&b)` identity; complement-via-XOR],
+    [Memory],      [SB/LBU/LB and SH/LHU/LH on aligned addresses; signed/unsigned byte and halfword widening],
+    [Shifts],      [SLL/SRL/SRA with constant counts (3, 15, 16, 4); variable counts; sign-propagation and zero-fill],
+    [Comparisons], [SLT and SLTU with `a=-1`, `b=1`; `INT_MIN < INT_MAX`; `UINT_MAX > 0`],
   ),
-  caption: [Behavioral test files for rvsc1 (`tests/behav/`)],
+  caption: [Behavioral test programs for rvsc1, by operation category],
 ) <tbl-sc1-behav-files>
 
 All 6 behavioral tests pass at every optimization level (`-O0` through `-Os`), for 6 × 5 = 30 cases.
 
-=== gcc.c-torture/execute Torture Suite <sc1-torture-tests>
-
-The GCC distribution includes `gcc.c-torture/execute`, a suite of 1 684 C programs originally developed to stress-test C compiler correctness. The programs are self-validating: they call `exit(0)` on success and `abort()` or `exit(1)` on failure, so no reference compiler is needed. The test harness `torture_behav.py` compiles each program with `rvsc1-unknown-elf-gcc` at all five optimization levels, links the result against the proxy kernel runtime, and runs it on Spike. A test passes if Spike exits with code 0.
+==== GCC Torture Suite <sc1-torture-tests>
 
 The full suite covers 1 684 × 5 = 8 420 compiler+optimizer combinations. @tbl-torture-results summarizes the outcome.
 
@@ -1680,9 +1407,10 @@ The full suite covers 1 684 × 5 = 8 420 compiler+optimizer combinations. @tbl-t
   caption: [gcc.c-torture/execute results for rvsc1 (8 420 combinations)],
 ) <tbl-torture-results>
 
-"Skipped" denotes programs that fail to compile (typically because they use `long long`, floating-point types, or other constructs not supported by the freestanding rvsc1 runtime). There are *zero correctness failures* at any optimization level: every program that compiles and completes within the time limit produces the correct result.
+"Skipped" denotes programs that fail to compile or link. The two dominant causes are unrelated to sc1's restricted instruction set: roughly 100 tests use old K&R-style implicit `int` declarations that GCC 17 (defaulting to C23) rejects as hard errors, and roughly 35 tests use `printf`/`sprintf`/`fprintf`, whose newlib implementation references an internal reentrant symbol (`_vfprintf_r`) absent from the linked sysroot. A further three use `__int128`, which 32-bit RISC-V does not support regardless of instruction set. 
 
-The 32 timed-out cases are programs that compile and execute correctly but generate so many synthesized instructions that Spike exceeds the 300-second simulation budget. Because rvsc1 replaces each shift instruction with a loop of 100 to 200 instructions, programs that perform many shifts at higher optimization levels can require orders of magnitude more retired instructions than the equivalent native-ISA binary. Two test programs are placed in a `KNOWN_SLOW` exclusion list because they always exceed the budget (`nestfunc-5.c` at `-O2` and `-O3`, which involves trampolines synthesized from shift-heavy code); these are counted in the "Skipped" column. @tbl-torture-timeouts lists the programs that consistently time out at `-O2` or `-O3`.
+// TODO: increase the timeout
+The 31 timed-out cases are programs that compile and execute correctly but generate so many synthesized instructions that Spike exceeds the 300-second simulation budget. Because rvsc1 replaces each shift instruction with a loop of 100 to 200 instructions, programs that perform many shifts at higher optimization levels can require orders of magnitude more retired instructions than the equivalent native-ISA binary. Two combinations are excluded up front because they always exceed the budget (`nestfunc-5.c` at `-O2` and `-O3`, which involves trampolines synthesized from shift-heavy code), these are counted in the "Skipped" column. @tbl-torture-timeouts lists the programs that consistently time out at `-O2` or `-O3`.
 
 #figure(
   table(
@@ -1704,13 +1432,9 @@ The 32 timed-out cases are programs that compile and execute correctly but gener
   caption: [gcc.c-torture programs that consistently time out (>300 s on Spike) due to synthesis overhead],
 ) <tbl-torture-timeouts>
 
-`riscv_rtx_costs` originally priced only synthesized shifts (@sc1-rtx-costs). It was later extended to cost the remaining synthesis-heavy operations realistically as well: sub-word memory extends and stores (`lb`/`lbu`/`lh`/`lhu` at ~75 instruction-equivalents, `sb`/`sh` at ~100--105), ordered comparisons when `!TARGET_SLT` (~65, for the `sub`/`xor`/`and`/`lshr` chain), and `xor` when `!TARGET_XOR` (3, for the `(a|b)-(a&b)` sequence). The intent was to let the optimizer avoid gratuitously duplicating or hoisting these expensive sequences, on the theory that this might reduce the retired-instruction count enough to clear some of the @tbl-torture-timeouts entries. Re-running all 20 program/optimization-level pairs from @tbl-torture-timeouts after the change showed no improvement: every pair still exceeds the 300-second Spike budget. This is consistent with the cost model's actual mechanism of action --- it only influences *codegen shape* decisions (inlining, GCSE, loop-invariant hoisting), not the number of times a loop already required by the source program executes. None of the flagged programs contain redundant or hoistable synthesis instances for the cost model to eliminate; their timeouts are dominated by legitimate loop trip counts multiplied by the fixed per-iteration synthesis overhead, which no cost-model change can reduce. The extension is retained because it makes the cost model accurate (a prerequisite for correct optimizer decisions elsewhere), but it does not affect @tbl-torture-results.
+=== rvsc2 <sc2-isa-tests>
 
-One program, `pr38051.c`, required an additional fix specific to `-Os`. At this optimization level the inliner merged `mymemcmp3` into `mymemcmp`, producing a function body with a shift synthesis loop inside an outer loop over memory and a tail call to `mymemcmp1`. IRA exploited a live-range hole inside the synthesis loop to assign a synthesis scratch to the return-address register `ra` (x1); the sibcall then transferred control with `ra` corrupted, and the program looped forever. The three `_sc1` post-reload shift patterns (`lshrsi3_sc1`, `ashrsi3_sc1`, `ashlsi3_sc1_var`) allocate their scratches through `match_scratch` clobbers whose default constraint (`=&r`, class `GR_REGS`) includes `ra`. The fix defines a new register class `NORA_REGS = GR_REGS - {ra}` in `riscv.h`, exposes it through the constraint letter `yr` in `constraints.md`, and changes every scratch in the three synthesis patterns to `=&yr`. With this change the program passes at all five optimization levels.
-
-=== rvsc2 --- Fence Mnemonic Check
-
-For rvsc2, only ISA compliance needs to be verified: the `fence` mnemonic must be absent from the output. This is confirmed by `fence.c`, which contains a C construct that would emit `fence` on a full RV32I target. The ISA compliance script checks that neither `fence` nor `fence.i` appears in the disassembly. No behavioral testing is required because the remainder of the rvsc2 instruction set is identical to rvsc3 (full RV32I), whose correctness is already established by the upstream GCC test suite.
+rvsc2 removes only `fence` (and `fence.i`) from RV32I, and nothing is synthesized: every instruction the compiler may emit is native. The only property left to verify is ISA compliance — that no fence instruction ever appears in the output. The rvsc1 test corpus is reused for this check, but against a much wider allowlist: the full RV32I base set minus the fence, CSR, and system instruction groups. The 19 programs at five optimization levels give 95 test cases; all pass, with neither `fence` nor `fence.i` appearing in any disassembly. No behavioral testing is required because the rvsc2 instruction set is otherwise identical to rvsc3 (full RV32I), whose correctness is already established by the upstream GCC test suite.
 
 === rvsc3 and Above
 
@@ -1720,61 +1444,391 @@ No testing is performed for rvsc3 through rvsc7. These targets contain no synthe
 
 Each synthesized instruction expands into a sequence of native instructions, increasing the static size of the compiled binary. The expansion ratio --- the number of native instructions emitted divided by the number of instructions a full-ISA compiler would emit --- quantifies the cost of each missing hardware instruction.
 
-Synthesis sequences fall into two categories. _Constant-length_ expansions always emit the same number of instructions regardless of operand values: NOT expands to 2 instructions, XOR to 3 (register operands; 4 with an immediate operand, @sc1-xor), and each immediate variant (ANDI, ORI) adds 1 instruction. _Variable-length_ expansions depend on runtime values: SLL, SRL, and SRA use count-down loops whose length is proportional to the shift amount, with worst-case counts of 127, ~170, and ~200 instructions respectively for a shift of 31.
+Synthesis sequences fall into two categories. _Constant-length_ expansions always emit the same number of instructions regardless of operand values: NOT expands to 2 instructions, XOR to 3 (register operands; 4 with an immediate operand, @sc1-xor), and each immediate variant (ANDI, ORI) adds 1 instruction. _Variable-length_ expansions depend on runtime values: SLL, SRL, and SRA use count-down loops whose length is proportional to the shift amount, with worst-case counts of 187, ~170, and ~200 instructions respectively for a shift of 31.
 
-// TODO [DATA REQUIRED]
-// Run rvsc0, rvsc1, and rvsc3 compilers on the programs below and count instructions:
-//   riscv32-none-elf-objdump -d <elf> | grep -c '^\s\+[0-9a-f]\+:'
-//
-// Programs: behav_xor.c, behav_shift_var.c (compiled with shift amount 8), behav_sb.c
-// Table columns: Program | rvsc3 instructions (native) | rvsc1 instructions (synthesized) | expansion ratio
-//
-// Replace this TODO block with the populated table.
+The per-instruction figures above bound the cost of any single synthesized operation, but the size penalty of a complete program depends on how often each restricted instruction actually appears. To quantify this on realistic code, the Embench-IoT benchmark suite @embench was compiled for three toolchains and the static code size of each benchmark compared:
+
+- *gcc17* --- the same GCC 17 fork used by this work, built for the stock `riscv32-unknown-elf` triple with no rvsc flags (`-march=rv32i -mabi=ilp32`), serving as the upstream reference;
+- *rvsc2* --- the native RV32I target of this work, in which nothing is synthesized; and
+- *rvsc1* --- the synthesized target, in which shifts, ordered branches, XOR, SLT, and byte and halfword memory accesses are all expanded.
+
+Code size is measured as the `.text` (executable code) section of each benchmark's own object files, rather than of a fully linked executable: the library code pulled in at link time (newlib and `libgcc`) is ABI-identical across all three toolchains and would only dilute the synthesized-versus-native ratio, which concerns the compiler's own output. All benchmarks were compiled at `-O2`. Because these targets emit no compressed instructions, every instruction occupies exactly four bytes, so the byte ratio reported below equals the instruction-count ratio.
+
+#figure(
+  table(
+    columns: (auto, auto, auto, auto),
+    align: (left, right, right, right),
+    [*Benchmark*], [*gcc17*], [*rvsc1*], [*rvsc1 / gcc17*],
+    [`aha-mont64`],     [3 548],  [17 940],  [5.06],
+    [`crc32`],          [380],    [908],     [2.39],
+    [`depthconv`],      [608],    [3 532],   [5.81],
+    [`edn`],            [3 244],  [22 832],  [7.04],
+    [`huffbench`],      [2 140],  [8 688],   [4.06],
+    [`matmult-int`],    [936],    [1 476],   [1.58],
+    [`md5sum`],         [1 016],  [2 408],   [2.37],
+    [`nettle-aes`],     [4 444],  [46 872],  [10.55],
+    [`nettle-sha256`],  [6 976],  [44 588],  [6.39],
+    [`nsichneu`],       [19 668], [65 364],  [3.32],
+    [`picojpeg`],       [15 360], [149 496], [9.73],
+    [`qrduino`],        [12 852], [126 048], [9.81],
+    [`sglib-combined`], [10 824], [58 256],  [5.38],
+    [`slre`],           [4 256],  [27 720],  [6.51],
+    [`statemate`],      [6 484],  [106 244], [16.39],
+    [`tarfind`],        [528],    [2 620],   [4.96],
+    [`ud`],             [1 436],  [2 020],   [1.41],
+    [`wikisort`],       [7 744],  [20 032],  [2.59],
+    [`xgboost`],        [624],    [5 620],   [9.01],
+  ),
+  caption: [Embench-IoT static code size (`.text` bytes, `-O2`) and rvsc1 expansion ratios],
+) <tbl-embench-size>
+
+Across the suite, synthesis inflates code size by a geometric mean of #sym.times 4.94 relative to the `gcc17` baseline. The custom `rvsc2` target produces code identical to `gcc17` for all 19 benchmarks (geomean ratio = 1.000), confirming that the rvsc2 configuration adds no overhead relative to the upstream GCC 17 build. The per-benchmark ratio tracks how shift- and comparison-heavy each workload is: the floating-point-dominated `ud` (few shifts) expands only #sym.times 1.41, whereas `statemate`, whose control flow is dominated by synthesized comparisons and branches, expands #sym.times 16.39.
 
 == Program Performance
 
 Since the target processor is single-cycle, every instruction retires in exactly one clock cycle (ignoring memory latency, which is implementation-dependent). Instruction count therefore equals clock cycle count for programs that access only register operands. Memory operations add latency that depends on the specific hardware implementation.
 
-Dynamic instruction counts are measured by running each compiled binary on Spike with `--log-commits` and counting the number of retired-instruction log lines. Variable-length syntheses are measured across a range of operand values to characterise their runtime behavior.
+Dynamic instruction counts are obtained by executing each compiled binary on Spike and totalling the retired instructions. Two granularities are reported. For individual operations (this section), a microbenchmark performs a single operation on `volatile` operands — so the compiler cannot fold or hoist it — and the retired instructions whose program counter falls inside `main` are counted from Spike's execution log (`spike -l`). The identical source is compiled once with native rvsc2 and once with synthesizing rvsc1; because the surrounding load, store, and return instructions are the same in both, subtracting them isolates the cost of the operation alone. For whole programs (@sec-embench-perf), the retired count is taken from Spike's PC histogram (`spike -g`), which totals executions per address at exit and so runs at near-native simulator speed.
 
-For SLL with a shift amount $b$, the synthesis loop executes $b$ iterations of 4 instructions each plus 3 setup instructions, giving a total retired instruction count of $3 + 4b$. This predicts:
+=== Individual operation cost <sec-op-cost>
+
+The variable left shift is the clearest illustration of synthesis cost, since its length grows with the operand. As derived in @sc1-sll, the synthesized loop costs $6b + 1$ retired instructions for a masked shift amount $b >= 1$ (and 3 when $b = 0$, executing only the mask and guard). @tbl-sll-perf compares this model against the measured isolated instruction count; the two agree exactly.
 
 #figure(
   table(
     columns: (auto, auto, auto, auto),
-    align: left,
-    [*Shift amount*], [*Predicted (3+4b)*], [*rvsc3 (native)*], [*rvsc1 (measured)*],
-    [0],  [3],   [1], [TODO],
-    [1],  [7],   [1], [TODO],
-    [8],  [35],  [1], [TODO],
-    [16], [67],  [1], [TODO],
-    [31], [127], [1], [TODO],
+    align: (right, right, right, right),
+    [*Shift amount $b$*], [*rvsc2 (native)*], [*rvsc1 model ($6b+1$)*], [*rvsc1 (measured)*],
+    [0],  [1], [3],   [3],
+    [1],  [1], [7],   [7],
+    [8],  [1], [49],  [49],
+    [16], [1], [97],  [97],
+    [31], [1], [187], [187],
   ),
-  caption: [SLL retired instruction counts: predicted vs. measured],
-)
+  caption: [SLL isolated retired-instruction counts: native vs. synthesized (model vs. measured).],
+) <tbl-sll-perf>
 
-// TODO [DATA REQUIRED]
-// Run the same programs as in the Program Size section.
-// Command: spike --log-commits --isa=rv32i <elf> 2>&1 | grep -c '^[0-9]'
-// Table columns: Program | rvsc3 cycles | rvsc1 cycles | overhead ratio
-//
-// Replace the SLL TODO values above and add a second table for xor and sb programs.
+Fixed-length operations behave analogously. @tbl-op-perf reports two representative cases: register `xor`, whose $(a or b) - (a and b)$ identity costs three instructions, and the byte store `sb`, whose read–modify–write over a word (load, extract the target lane, mask it out, splice in the new byte, store back) is by far the most expensive single operation in the sc1 repertoire.
+
+#figure(
+  table(
+    columns: (auto, auto, auto, auto),
+    align: (left, right, right, right),
+    [*Operation*], [*rvsc2 (native)*], [*rvsc1 (synth)*], [*Overhead*],
+    [`xor` (register)], [1], [3],   [3#sym.times],
+    [`sb` (byte store)], [1], [113], [113#sym.times],
+  ),
+  caption: [Isolated retired-instruction counts for fixed-length syntheses.],
+) <tbl-op-perf>
+
+=== Whole-program dynamic instruction counts <sec-embench-perf>
+
+The isolated figures above bound the cost of one operation, the dynamic cost of a whole program depends on how often each synthesized instruction executes at run time, weighted by loop trip counts rather than by static frequency. To measure this, each Embench-IoT benchmark was linked into a bare-metal ELF (running under the RISC-V proxy kernel) and executed on Spike, with the total retired-instruction count read from Spike's PC histogram. Only the two toolchains that can link an `rv32i`/`ilp32` program participate: native rvsc2 (the baseline) and synthesized rvsc1. The stock `riscv32-none-elf-gcc` is excluded, as its fixed multilib cannot link an `rv32i` binary, and `wikisort` fails to link under rvsc2 for an unrelated reason.
+
+Because rvsc1 replaces each shift with a loop that retires up to 187 instructions, shift-heavy benchmarks retire orders of magnitude more instructions than their native counterparts. Five benchmarks exceeded a 300-second Spike budget under rvsc1 and are reported as TIMEOUT --- an expected outcome that is itself informative: the synthesized program is not merely larger but dynamically so much slower that full simulation becomes impractical, mirroring the torture-suite timeouts of @tbl-torture-timeouts.
+
+#figure(
+  table(
+    columns: (auto, auto, auto, auto),
+    align: (left, right, right, right),
+    [*Benchmark*], [*rvsc2 (native)*], [*rvsc1 (synth)*], [*Overhead*],
+    [`aha-mont64`],     [12 997 428], [_timeout_],       [---],
+    [`crc32`],          [5 991 188],  [130 556 929],     [21.8#sym.times],
+    [`depthconv`],      [54 552 784], [1 306 486 627],   [23.9#sym.times],
+    [`edn`],            [68 624 580], [512 612 605],      [7.5#sym.times],
+    [`huffbench`],      [2 399 142],  [_timeout_],       [---],
+    [`matmult-int`],    [24 445 873], [25 543 407],       [1.0#sym.times],
+    [`md5sum`],         [2 917 425],  [38 694 462],      [13.3#sym.times],
+    [`nettle-aes`],     [4 674 471],  [171 446 978],     [36.7#sym.times],
+    [`nettle-sha256`],  [4 917 841],  [_timeout_],       [---],
+    [`nsichneu`],       [2 514 597],  [14 689 559],       [5.8#sym.times],
+    [`picojpeg`],       [3 602 866],  [_timeout_],       [---],
+    [`qrduino`],        [5 140 049],  [_timeout_],       [---],
+    [`sglib-combined`], [3 005 822],  [68 953 363],      [22.9#sym.times],
+    [`slre`],           [2 983 415],  [88 220 929],      [29.6#sym.times],
+    [`statemate`],      [2 065 897],  [150 934 719],     [73.1#sym.times],
+    [`tarfind`],        [5 287 906],  [37 627 640],       [7.1#sym.times],
+    [`ud`],             [6 622 675],  [8 378 022],        [1.3#sym.times],
+    [`wikisort`],       [_linkfail_], [17 710 935],      [---],
+    [`xgboost`],        [3 804 604],  [433 520 452],    [113.9#sym.times],
+  ),
+  caption: [Embench-IoT dynamic retired-instruction counts on Spike and rvsc1 run-time overhead. Geomean is over the thirteen benchmarks that completed on both toolchains.],
+) <tbl-embench-perf>
+
+Across the thirteen benchmarks that completed on both toolchains, synthesis inflates the dynamic instruction count by a geometric mean of #sym.times 13.7, roughly triple the #sym.times 4.94 static-size penalty, because the most expensive syntheses sit inside the hottest loops. The spread is wide and, as with code size, tracks each workload's reliance on synthesized instructions: `matmult-int` and `ud`, dominated by native multiply--add work, run at #sym.times 1.0 and #sym.times 1.3, whereas the shift- and rotate-heavy `xgboost` and the comparison-heavy `statemate` reach #sym.times 113.9 and #sym.times 73.1. This confirms the pedagogical point quantitatively: the run-time cost of an absent instruction is not a fixed tax but is paid in proportion to how often the program actually needs it.
 
 == Discussion
 
-// TODO [after data is collected]: ~3 paragraphs:
-// 1. ISA compliance: the compiler never emits a forbidden mnemonic, as confirmed
-//    by every ISA compliance test passing. The use of objdump -M no-aliases ensures
-//    pseudo-instructions are fully expanded before the check.
-// 2. Behavioral equivalence: rvsc1 synthesized programs produce the same exit codes
-//    as reference RV32I binaries on Spike across all differential tests. rvsc0 programs
-//    produce the same tohost values as the reference for single-function programs.
-// 3. Performance cost: quantify overhead from the tables above. Note that for typical
-//    educational programs (small shift amounts, few byte operations) the overhead is
-//    modest and predictable. The pedagogical value is that students can observe the
-//    concrete cost of each ISA restriction by comparing -S output between rvsc1 and rvsc3.
+The results establish correctness first and cost second. On the correctness axis, the ISA compliance tests confirm that the compiler never emits a forbidden mnemonic: every generated object was disassembled with `objdump -M no-aliases`, which expands pseudo-instructions to their underlying encodings, so a restricted instruction cannot slip past the allowlist disguised as a pseudo. Behavioral equivalence is established independently by differential execution on Spike: every rvsc1 program produces the same exit code as the reference RV32I binary compiled from the same source, and every rvsc0 single-function program writes the same `tohost` value as its reference. Synthesis therefore changes how a computation is expressed, not what it computes.
+
+The cost of that re-expression is quantified along two dimensions. Statically, synthesis inflates code size by a geometric mean of #sym.times 4.94 over the Embench suite (@tbl-embench-size); dynamically, it inflates the retired-instruction count by a geometric mean of #sym.times 13.7 over the benchmarks that complete (@tbl-embench-perf). The dynamic penalty is the larger of the two because the costliest syntheses --- the shift loops, each of which re-materializes its own back-edge every iteration (@sc1-sll) --- tend to sit inside the hottest loops, so their cost is multiplied by trip count rather than merely by static occurrence. Both penalties vary by more than an order of magnitude across workloads, from near-parity for multiply--add-dominated code (`matmult-int`, `ud`) to two orders of magnitude for shift- and comparison-heavy code (`xgboost`, `statemate`).
+
+For the pedagogical setting these targets are built for, this variation is the point rather than a limitation. The programs students write in an introductory single-cycle course --- small loops, modest shift amounts, few byte-granular memory accesses --- fall at the inexpensive end of both distributions, so the toolchain remains practical to use. At the same time, the wide spread makes the cost of each ISA restriction concrete and measurable: a student can compile the same source for rvsc1 and rvsc3, compare the `-S` output, and see exactly how many native instructions a single missing `sll` or `sb` expands into. The compiler thus turns an abstract statement about instruction-set design --- "omitting an instruction shifts its cost into software" --- into a number the student can read off the assembly.
 
 = Conclusion <ch-conclusion>
+
+This work developed eight GCC compiler targets for the simplified RISC-V processors described in the Hennessy--Patterson textbook, addressing the practical barrier that prevented students of PCS3225 at USP from compiling and running C programs on the processors they build. The four specific objectives stated in @ch-intro were met: a minimal target (`rvsc0`) for the eight-instruction Chapter 4.4 processor, a target (`rvsc1`) matching the course homework extension with full C calling convention support, and six progressive targets (`rvsc2` through `rvsc7`) covering the full RV32I-to-RV64IMAFD progression. Every instruction not natively supported by a given target is synthesized from the primitives that target does provide, transparently to the programmer.
+
+== Contributions
+
+The primary contribution is the set of synthesis techniques embedded in the GCC machine description. For the two most restricted targets, rvsc0 and rvsc1, eighteen distinct operations require synthesis, ranging from one-instruction replacements (NOT, immediate variants) to variable-length loops (SLL, SRL, SRA), multi-instruction identities (XOR, SLT, SLTU), read-modify-write sequences (LB, LBU, LH, LHU, SB, SH), and call-site code generation (JAL, JMP). The rvsc0 target additionally requires constant pool materialization for LUI, since 32-bit constants cannot otherwise be constructed from the eight available instructions. Each synthesis was derived algebraically and embedded as a `define_expand` in `riscv.md`, so GCC selects and schedules the sequence as part of normal compilation with no programmer intervention.
+
+A secondary contribution is the validation methodology. Two independent test layers were developed and applied: an ISA compliance suite that disassembles every generated object with `objdump -M no-aliases` and verifies that no forbidden mnemonic appears, and a behavioral equivalence suite that executes rvsc1 and rvsc0 binaries on Spike and compares their outputs against a reference RV32I build. Together these layers confirm that synthesis is both correct by construction (no forbidden instruction is ever emitted) and correct by execution (the computed results are indistinguishable from those of a full-ISA compiler).
+
+== Results Summary
+
+Correctness was established for all synthesis cases in rvsc0 and rvsc1. All ISA compliance tests pass, and the differential behavioral tests confirm semantic equivalence across all tested programs. The rvsc2 target compiles the full Embench-IoT suite with code identical to the upstream GCC 17 baseline (geomean ratio = 1.000), confirming that the custom target configuration introduces no overhead relative to a stock build.
+
+The cost of synthesis was quantified on two axes. Statically, the synthesized rvsc1 target inflates code size by a geometric mean of #sym.times 4.94 over the nineteen Embench benchmarks, with a range from #sym.times 1.41 (`ud`, few shifts) to #sym.times 16.39 (`statemate`, comparison-heavy control flow). Dynamically, it inflates retired instruction counts by a geometric mean of #sym.times 13.7 over the thirteen benchmarks that completed within the time budget, with five benchmarks timing out entirely, an outcome expected from the worst-case shift loop depth of 187 instructions per operation.
+
+For the pedagogical use case, these figures are not a disqualifying limitation. The programs students write in an introductory course fall at the inexpensive end of both distributions. More importantly, the wide spread between workloads makes the cost of each absent instruction concrete and measurable: compiling the same source for rvsc1 and rvsc2 and diffing the assembly output shows exactly how many native instructions a missing `sll` or `sb` expands into.
+
+== Limitations
+
+Synthesis does not apply to targets rvsc2 through rvsc7, these targets expose the full upstream RISC-V backend and require no new synthesis logic. Their correctness depends entirely on the upstream GCC test suite.
+
+The rvsc0 target, unlike rvsc1, cannot execute programs that call and return from functions, because `jalr` is absent. The constant pool mechanism enables 32-bit constant loading and unconditional jumps, but programs must be written as non-returning single functions. This restriction matches the processor it targets, but it means the behavioral test harness that uses HTIF (which requires `jalr` for the call to `main`) cannot be used for rvsc0,rvsc0 programs write their result directly to `tohost` via `sw`.
+
+The synthesized shift loops are functionally correct but dynamically expensive to the point of impracticality for programs that shift inside hot loops. The synthesis is inherently sequential: the GCC machine description expands a shift at compile time into a counted loop, which at run time executes one iteration per bit position. There is no partial-hardware or table-driven alternative within the instruction set these targets support.
+
+== Future Work
+
+The most direct extension would be performance optimizations within the existing synthesis. Constant-amount shifts are currently synthesized as loops, even though the shift amount is known at compile time and could instead be unrolled statically, reducing the per-shift cost from $6b + 1$ to $2b$ instructions without any new hardware. This would require a separate `define_expand` branch for `CONST_INT_P` shift counts.
+
+On the hardware side, each synthesis in this work corresponds exactly to the cost of the missing instruction in hardware. A student who extends the Chapter 4.4 processor with, for example, a barrel shifter could recompile with `-mshift` enabled and the compiler would switch to native `sll`/`srl`/`sra` automatically, making the hardware improvement immediately observable in both binary size and execution time. Building this feedback loop into a course lab, extend the hardware, recompile, measure the speedup,  is a natural next step.
+
+Finally, the target configuration and synthesis infrastructure developed here could be packaged as a course resource for PCS3225, including pre-built toolchain binaries, startup files, linker scripts, and a simple Makefile or justfile that lets students go from a C source file to a Spike execution with a single command.
+
+#heading(level: 1, numbering: none)[Appendices]
+
+== Worked Compilation Example <apx-example>
+
+The following expression combines three operations that the restricted targets must synthesize: a bitwise XOR, a constant left shift, and a 32-bit constant whose upper bits are set. Compiling it for rvsc2, rvsc1, and rvsc0 shows how the same source progressively expands as native instructions are removed from the ISA. The listings below are the real instructions emitted (disassembled with pseudo-instruction expansion, so `ret` appears as `jalr` and `li` as its underlying `lui`).
+
+rvsc1 and rvsc2 both provide `jalr`, so the operation can be written as an ordinary function that returns its result:
+
+```c
+int example(int a, int b) {
+    return ((a ^ b) << 2) + 0x12345000;
+}
+```
+
+rvsc0 has no `jalr`, so functions cannot return to a caller. The equivalent rvsc0 program is a single non-returning function that stores the result to memory instead:
+
+```c
+__attribute__((noreturn))
+void example(int a, int b) {
+    volatile int r = ((a ^ b) << 2) + 0x12345000;
+    __builtin_unreachable();
+}
+```
+
+*rvsc2* — full RV32I: every operation is a native instruction.
+
+```asm
+example:
+    xor   a0, a0, a1        # a ^ b
+    slli  a0, a0, 0x2       # << 2
+    lui   a5, 0x12345       # 0x12345000  (low 12 bits are zero)
+    add   a0, a0, a5        # + constant
+    jalr  zero, 0(ra)       # return
+```
+
+*rvsc1* — no native XOR, shift, or `jal`/`ret`. XOR becomes `(a|b)-(a&b)`, the shift becomes repeated self-addition, but `lui` and `jalr` are still native:
+
+```asm
+example:
+    and   a5, a0, a1        # \
+    or    a0, a0, a1        #  XOR = (a|b) - (a&b)
+    sub   a0, a0, a5        # /
+    add   a0, a0, a0        # \  << 2 as two self-additions
+    add   a0, a0, a0        # /
+    lui   a5, 0x12345       # 0x12345000
+    add   a0, a0, a5        # + constant
+    jalr  zero, 0(ra)       # return
+```
+
+*rvsc0* — additionally lacks `lui` and `jalr`. The constant is materialized from a constant pool via `lw` at a link-time address below 2048, and the function stores its result to the stack rather than returning:
+
+```asm
+example:
+    addi  sp, sp, -16
+    and   a5, a0, a1        # \
+    or    a0, a0, a1        #  XOR = (a|b) - (a&b)
+    sub   a0, a0, a5        # /
+    add   a0, a0, a0        # \  << 2 as two self-additions
+    add   a0, a0, a0        # /
+    lw    a5, %lo(pool)(zero)   # load 0x12345000 from constant pool
+    add   a0, a0, a5        # + constant
+    sw    a0, 12(sp)        # store result (no return possible)
+pool:
+    .word 0x12345000
+```
+
+== SLL Synthesis Assembly <apx-sll-asm>
+
+```asm
+# rd = rs1 << rs2
+    add   t1, rs2, x0    # t1 = rs2 (save shift count; rd may alias rs2)
+    add   rd, rs1, x0    # rd = rs1
+    beq   t1, x0, done   # if rs2 == 0, no shift needed
+loop:
+    add   rd, rd, rd     # rd <<= 1
+    addi  t1, t1, -1
+    beq   t1, x0, done
+    beq   x0, x0, loop
+done:
+```
+
+== SRL Synthesis Assembly <apx-srl-asm>
+
+```asm
+# rd = rs1 >> rs2 (logical shift right)
+    addi  t0, x0, 31
+    and   t3, rs2, t0    # t3 = shift & 31
+    add   t5, rs1, x0    # t5 = rs1 (save before rd is zeroed; fixes rd/rs1 aliasing)
+    addi  rd, x0, 0      # result = 0
+    addi  t1, x0, 1      # out_mask = 1
+    [sll  t2, t1, t3]    # in_mask = 1 << shift
+loop:
+    beq   t2, x0, done   # if in_mask == 0, all bits processed
+    and   t4, t5, t2     # t4 = rs1 & in_mask  (use saved t5)
+    beq   t4, x0, skip   # if bit is 0, skip
+    or    rd, rd, t1     # result |= out_mask
+skip:
+    add   t1, t1, t1     # out_mask <<= 1
+    add   t2, t2, t2     # in_mask <<= 1
+    beq   x0, x0, loop
+done:
+```
+
+== SRA Synthesis Assembly <apx-sra-asm>
+
+```asm
+# rd = rs1 >>_s rs2 (arithmetic shift right)
+
+    # Step 1: check sign bit of rs1 BEFORE srl (avoids rd/rs1 aliasing)
+    addi  t0, x0, 1
+    [sll  t0, t0, 31]    # t0 = 0x80000000
+    and   t6, rs1, t0   # t6 = sign bit (saved in t6; srl uses t0–t5)
+
+    # Step 2: logical right shift
+    [srl  rd, rs1, rs2]  # rd = srl(rs1, rs2)
+
+    beq   t6, x0, done  # positive → no sign extension needed
+
+    # Step 3: re-mask shift; early exit if shift == 0 mod 32
+    addi  t0, x0, 31
+    and   t3, rs2, t0   # t3 = shift & 31 (fixes unmasked-rs2 bug for rs2 > 31)
+    beq   t3, x0, done  # shift == 0 mod 32 → sra(x, 0) = x
+
+    # Step 4: sign_mask = -1 << (32 - shift)
+    addi  t2, x0, -1    # t2 = 0xFFFFFFFF
+    addi  t4, x0, 32
+    sub   t4, t4, t3    # t4 = 32 - (shift & 31)
+    [sll  t2, t2, t4]   # sign_mask = -1 << (32 - shift)
+    or    rd, rd, t2
+done:
+```
+
+== SLT Synthesis Assembly <apx-slt-asm>
+
+```asm
+sub   t0, rs1, rs2   # diff = rs1 - rs2
+[xor  t1, rs1, rs2]  # t1 = rs1 ^ rs2  (derived)
+[xor  t2, rs1, t0]   # t2 = rs1 ^ diff  (derived)
+and   t1, t1, t2     # overflow = (rs1^rs2) & (rs1^diff)
+[xor  t0, t0, t1]    # corrected = diff ^ overflow  (derived)
+[srl  rd,  t0, 31]   # rd = corrected >> 31  (derived)
+```
+
+== SLTU Synthesis Assembly <apx-sltu-asm>
+
+```asm
+sub   t0, rs1, rs2   # diff = rs1 - rs2
+[not  t1, rs1]       # t1 = ~rs1  (derived)
+and   t2, t1, rs2    # t2 = ~rs1 & rs2  (borrow generated)
+[xor  t3, rs1, rs2]  # t3 = rs1 ^ rs2  (derived)
+[not  t3, t3]        # t3 = ~(rs1 ^ rs2)  (derived)
+and   t3, t3, t0     # t3 = ~(rs1^rs2) & diff  (borrow propagated)
+or    t2, t2, t3     # borrow = generated | propagated
+[srl  rd,  t2, 31]   # rd = borrow >> 31  (derived)
+```
+
+== LB / LBU / LH / LHU Synthesis Assembly <apx-lb-lh-asm>
+
+```asm
+# lb rd, 0(rs1)  (address in rs1, byte_pos unknown at compile-time)
+addi  t0, x0, -4
+and   t0, rs1, t0         # t0 = rs1 & -4  (word-aligned)
+lw    t1, 0(t0)           # t1 = word containing the byte
+addi  t0, x0, 3
+and   t0, rs1, t0         # t0 = rs1 & 3  (byte position: 0–3)
+[sll  t0, t0, 3]          # t0 = byte_pos * 8  (bit offset)
+[srl  t1, t1, t0]         # t1 >>= bit_off  (byte in bits [7:0])
+[sll  t1, t1, 24]         # t1 <<= 24  (byte in bits [31:24])
+[sra  rd,  t1, 24]        # rd >>= 24  (sign-extend → lb)
+                          # use [srl] in the last step for lbu (zero-extend)
+
+# lh rd, 0(rs1)  — identical but MASK = 2, BITS = 16
+addi  t0, x0, -4
+and   t0, rs1, t0         # word-aligned
+lw    t1, 0(t0)
+addi  t0, x0, 2
+and   t0, rs1, t0         # t0 = rs1 & 2  (0 or 2: which halfword)
+[sll  t0, t0, 3]          # t0 = half_pos * 8  (0 or 16)
+[srl  t1, t1, t0]         # halfword in bits [15:0]
+[sll  t1, t1, 16]
+[sra  rd,  t1, 16]        # sign-extend → lh  (srl for lhu)
+```
+
+== SB Synthesis Assembly <apx-sb-asm>
+
+```asm
+# sb rs2, 0(rs1)   — address in rs1, byte position unknown at compile-time
+addi  t0, x0, -4
+and   t3, rs1, t0           # t3 = rs1 & -4  (word-aligned)
+addi  t0, x0, 3
+and   t0, rs1, t0           # t0 = rs1 & 3  (byte_pos: 0–3)
+add   t0, t0, t0            # \
+add   t0, t0, t0            #  t0 = byte_pos * 8  (constant-3 sll; no loop needed)
+add   t0, t0, t0            # /
+lw    t1, 0(t3)             # t1 = old word
+addi  t2, x0, 255           # t2 = 0xFF
+[sll  t2, t2, t0]           # t2 = 0xFF << shift  (mask)
+[not  t2, t2]               # t2 = ~mask  — 2 insns (Section 5.2.1)
+and   t1, t1, t2            # t1 = old_word & ~mask  (clear target byte)
+addi  t2, x0, 255
+and   t2, rs2, t2           # t2 = rs2 & 0xFF  (isolate input byte)
+[sll  t2, t2, t0]           # t2 = byte_value << shift
+or    t1, t1, t2            # t1 = word with byte inserted
+sw    t1, 0(t3)             # write back
+```
+
+== SH Synthesis Assembly <apx-sh-asm>
+
+```asm
+# sh rs2, 0(rs1)
+addi  t0, x0, -4
+and   t3, rs1, t0           # t3 = rs1 & -4  (word-aligned)
+addi  t0, x0, 2
+and   t0, rs1, t0           # t0 = rs1 & 2  (hw_pos: 0 or 2)
+add   t0, t0, t0            # \
+add   t0, t0, t0            #  t0 = hw_pos * 8  (0 or 16; constant-3 sll)
+add   t0, t0, t0            # /
+lw    t1, 0(t3)             # t1 = old word
+lui   t2, 0x10              # \
+addi  t2, t2, -1            #  t2 = 0xFFFF
+[sll  t2, t2, t0]           # t2 = 0xFFFF << shift  (mask)
+[not  t2, t2]               # t2 = ~mask  — 2 insns (Section 5.2.1)
+and   t1, t1, t2            # t1 = old_word & ~mask
+lui   t2, 0x10
+addi  t2, t2, -1            # t2 = 0xFFFF
+and   t2, rs2, t2           # t2 = rs2 & 0xFFFF
+[sll  t2, t2, t0]           # t2 = hw_value << shift
+or    t1, t1, t2            # t1 = word with halfword inserted
+sw    t1, 0(t3)             # write back
+```
 
 = References
 

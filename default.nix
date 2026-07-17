@@ -25,7 +25,7 @@ pkgs.mkShell {
     bison
     texinfo
     perl
-    python3
+    (python3.withPackages (ps: with ps; [ pyelftools ]))
     gettext
     pkg-config
     autoconf
@@ -49,6 +49,9 @@ pkgs.mkShell {
 
     # Build runner
     just
+
+    # Embench-IoT benchmark harness (code-size measurement)
+    scons
 
     # Binary analysis: assemble + disassemble for binary instruction check
     pkgsCross.riscv32-embedded.buildPackages.binutils  # riscv32-none-elf-as/objdump

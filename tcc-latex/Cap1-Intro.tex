@@ -1,0 +1,89 @@
+\chapter{Introduction} \label{cap:intro}
+
+\section{Motivation}
+
+\textit{Computer Organization and Design: RISC-V Edition} by Patterson and Hennessy \cite{patterson2020}
+is one of the most widely adopted references in undergraduate computer architecture courses worldwide.
+At the University of São Paulo's Escola Politécnica, the course \textit{PCS3225 --- Digital Systems 2}
+uses this textbook as its primary reference. Students follow its progression step by step, implementing
+a simplified RISC-V processor in Verilog from book reference.
+
+The simplified single-cycle processor introduced in Chapter 4.4 of the book, \textit{A Simple
+Implementation Scheme}, supports only eight instructions: \texttt{lw}, \texttt{sw}, \texttt{beq},
+\texttt{add}, \texttt{addi}, \texttt{sub}, \texttt{and}, and \texttt{or}. This restriction is
+deliberate and pedagogically motivated, it isolates the essential datapath and control concepts before
+more complex features are introduced. A subsequent homework assignment extends the processor with
+\texttt{lui} and \texttt{jalr}, enabling function calls. Both implementations are partial subsets of
+the RV32I base ISA \cite{riscv-spec}.
+
+This restriction creates a practical barrier. The standard RISC-V GCC toolchain
+(\texttt{riscv32-unknown-elf-gcc}) targets the full RV32I base ISA \cite{riscv-spec}, which includes
+shift instructions, byte and halfword memory operations, multiple branch variants, and PC-relative
+addressing. Any C program compiled with this toolchain will emit instructions that the student-built
+processor cannot execute.
+
+As a result, students are limited to running hand-written assembly or small programs provided by the
+professor. They cannot compile and run arbitrary C code on the processor they designed and built. This
+prevents them from connecting the hardware they implement to the software abstractions they use daily,
+and forecloses the pedagogical opportunity of observing how a compiler translates and optimizes C code
+into the primitive instructions their processor supports.
+
+\section{Objective}
+
+This work develops eight progressive GCC compiler targets for the simplified RISC-V processors
+described in the Hennessy and Patterson textbook, enabling students of the PCS3225 course at USP to
+compile and run C programs on the processors they build in Verilog.
+
+The specific objectives are:
+
+\begin{enumerate}
+  \item Define a minimal GCC target (\texttt{rvsc0}) matching the eight-instruction single-cycle
+        processor described in Chapter 4.4 of the textbook, synthesizing all operations not natively
+        supported by that processor.
+  \item Define a target (\texttt{rvsc1}) matching the course homework processor, \texttt{rvsc0}
+        extended with \texttt{lui} and \texttt{jalr}, as the minimum instruction set capable of
+        supporting the full C calling convention with synthesis.
+  \item Define six additional progressive targets (\texttt{rvsc2} through \texttt{rvsc7}),
+        incrementally extending the supported instruction set from bare RV32I through RV64IMAFD,
+        for students who wish to continue developing their processor beyond the course scope.
+  \item Synthesize every instruction not natively supported by a given target as an equivalent
+        sequence of instructions that the target does support.
+\end{enumerate}
+
+\section{Rationale}
+
+To the best of the authors' knowledge, no prior work addresses C compilation for intentionally
+restricted pedagogical RISC-V subsets. GCC's machine description framework \cite{gcc-internals} makes
+it possible to define a backend that synthesizes missing instructions transparently from the primitives
+the hardware does support. Applying this mechanism to pedagogical ISAs that deliberately omit standard
+instructions appears to be novel.
+
+The ability to run a self-written C program on a processor the student designed and built closes a
+pedagogical loop that rarely closes in undergraduate education. Most courses treat hardware and software
+as adjacent subjects that never directly intersect. This work creates a complete vertical slice from C
+source to register-level execution on student hardware. Students can compile a function, inspect the
+output, and observe concretely how the compiler synthesizes a shift operation from repeated additions,
+or a signed comparison from subtraction and bit manipulation, making the cost of each ISA restriction
+tangible rather than abstract.
+
+Furthermore, students interact with GCC, the dominant open-source compiler for embedded and systems
+software, rather than a pedagogical toy. The flags, ABI conventions, ELF output, and linker scripts
+they encounter are identical to those used in professional and research settings, giving the exercise
+relevance beyond the course itself.
+
+\section{Document Organization}
+
+The remainder of this monograph is organized as follows.
+Chapter~\ref{cap:related-work} surveys related work.
+Chapter~\ref{cap:background} presents the conceptual background, covering the GCC compilation
+framework, the RISC-V instruction set architecture, and the architecture of the Hennessy-Patterson
+educational processor.
+Chapter~\ref{cap:method} describes the development method, including the specification,
+implementation, and testing phases followed for each target.
+Chapter~\ref{cap:requirements} specifies the requirements for each of the eight targets, defining
+the allowed instruction sets and the synthesis obligations imposed on the compiler.
+Chapter~\ref{cap:development} details the implementation, describing the instruction synthesis
+techniques developed inside the GCC machine description and the per-target configuration files.
+Chapter~\ref{cap:results} presents the test results and discusses the validity and limitations of
+each target.
+Chapter~\ref{cap:conclusion} presents the conclusions, contributions, and directions for future work.

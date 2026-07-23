@@ -1,0 +1,247 @@
+\chapter{Worked Compilation Example} \label{apx:example}
+
+The following expression combines three operations that the restricted targets must synthesize: a
+bitwise XOR, a constant left shift, and a 32-bit constant whose upper bits are set. Compiling it for
+rvsc2, rvsc1, and rvsc0 shows how the same source progressively expands as native instructions are
+removed from the ISA. The listings below are the real instructions emitted (disassembled with
+pseudo-instruction expansion, so \texttt{ret} appears as \texttt{jalr} and \texttt{li} as its
+underlying \texttt{lui}).
+
+rvsc1 and rvsc2 both provide \texttt{jalr}, so the operation can be written as an ordinary function
+that returns its result:
+
+\begin{lstlisting}[language=C]
+int example(int a, int b) {
+    return ((a ^ b) << 2) + 0x12345000;
+}
+\end{lstlisting}
+
+rvsc0 has no \texttt{jalr}, so functions cannot return to a caller. The equivalent rvsc0 program is
+a single non-returning function that stores the result to memory instead:
+
+\begin{lstlisting}[language=C]
+__attribute__((noreturn))
+void example(int a, int b) {
+    volatile int r = ((a ^ b) << 2) + 0x12345000;
+    __builtin_unreachable();
+}
+\end{lstlisting}
+
+\textbf{rvsc2} --- full RV32I: every operation is a native instruction.
+
+\begin{lstlisting}
+example:
+    xor   a0, a0, a1        # a ^ b
+    slli  a0, a0, 0x2       # << 2
+    lui   a5, 0x12345       # 0x12345000  (low 12 bits are zero)
+    add   a0, a0, a5        # + constant
+    jalr  zero, 0(ra)       # return
+\end{lstlisting}
+
+\textbf{rvsc1} --- no native XOR, shift, or \texttt{jal}/\texttt{ret}. XOR becomes
+\texttt{(a|b)-(a\&b)}, the shift becomes repeated self-addition, but \texttt{lui} and \texttt{jalr}
+are still native:
+
+\begin{lstlisting}
+example:
+    and   a5, a0, a1        # \
+    or    a0, a0, a1        #  XOR = (a|b) - (a&b)
+    sub   a0, a0, a5        # /
+    add   a0, a0, a0        # \  << 2 as two self-additions
+    add   a0, a0, a0        # /
+    lui   a5, 0x12345       # 0x12345000
+    add   a0, a0, a5        # + constant
+    jalr  zero, 0(ra)       # return
+\end{lstlisting}
+
+\textbf{rvsc0} --- additionally lacks \texttt{lui} and \texttt{jalr}. The constant is materialized
+from a constant pool via \texttt{lw} at a link-time address below 2048, and the function stores its
+result to the stack rather than returning:
+
+\begin{lstlisting}
+example:
+    addi  sp, sp, -16
+    and   a5, a0, a1        # \
+    or    a0, a0, a1        #  XOR = (a|b) - (a&b)
+    sub   a0, a0, a5        # /
+    add   a0, a0, a0        # \  << 2 as two self-additions
+    add   a0, a0, a0        # /
+    lw    a5, %lo(pool)(zero)   # load 0x12345000 from constant pool
+    add   a0, a0, a5        # + constant
+    sw    a0, 12(sp)        # store result (no return possible)
+pool:
+    .word 0x12345000
+\end{lstlisting}
+
+
+\chapter{SLL Synthesis Assembly} \label{apx:sll-asm}
+
+\begin{lstlisting}
+# rd = rs1 << rs2
+    add   t1, rs2, x0    # t1 = rs2 (save shift count; rd may alias rs2)
+    add   rd, rs1, x0    # rd = rs1
+    beq   t1, x0, done   # if rs2 == 0, no shift needed
+loop:
+    add   rd, rd, rd     # rd <<= 1
+    addi  t1, t1, -1
+    beq   t1, x0, done
+    beq   x0, x0, loop
+done:
+\end{lstlisting}
+
+
+\chapter{SRL Synthesis Assembly} \label{apx:srl-asm}
+
+\begin{lstlisting}
+# rd = rs1 >> rs2 (logical shift right)
+    addi  t0, x0, 31
+    and   t3, rs2, t0    # t3 = shift & 31
+    add   t5, rs1, x0    # t5 = rs1 (save before rd is zeroed)
+    addi  rd, x0, 0      # result = 0
+    addi  t1, x0, 1      # out_mask = 1
+    [sll  t2, t1, t3]    # in_mask = 1 << shift
+loop:
+    beq   t2, x0, done   # if in_mask == 0, all bits processed
+    and   t4, t5, t2     # t4 = rs1 & in_mask
+    beq   t4, x0, skip   # if bit is 0, skip
+    or    rd, rd, t1     # result |= out_mask
+skip:
+    add   t1, t1, t1     # out_mask <<= 1
+    add   t2, t2, t2     # in_mask <<= 1
+    beq   x0, x0, loop
+done:
+\end{lstlisting}
+
+
+\chapter{SRA Synthesis Assembly} \label{apx:sra-asm}
+
+\begin{lstlisting}
+# rd = rs1 >>_s rs2 (arithmetic shift right)
+
+    # Step 1: check sign bit of rs1 BEFORE srl (avoids rd/rs1 aliasing)
+    addi  t0, x0, 1
+    [sll  t0, t0, 31]    # t0 = 0x80000000
+    and   t6, rs1, t0    # t6 = sign bit (saved in t6; srl uses t0-t5)
+
+    # Step 2: logical right shift
+    [srl  rd, rs1, rs2]  # rd = srl(rs1, rs2)
+
+    beq   t6, x0, done   # positive -> no sign extension needed
+
+    # Step 3: re-mask shift; early exit if shift == 0 mod 32
+    addi  t0, x0, 31
+    and   t3, rs2, t0    # t3 = shift & 31
+    beq   t3, x0, done   # shift == 0 mod 32 -> sra(x, 0) = x
+
+    # Step 4: sign_mask = -1 << (32 - shift)
+    addi  t2, x0, -1     # t2 = 0xFFFFFFFF
+    addi  t4, x0, 32
+    sub   t4, t4, t3     # t4 = 32 - (shift & 31)
+    [sll  t2, t2, t4]    # sign_mask = -1 << (32 - shift)
+    or    rd, rd, t2
+done:
+\end{lstlisting}
+
+
+\chapter{SLT Synthesis Assembly} \label{apx:slt-asm}
+
+\begin{lstlisting}
+sub   t0, rs1, rs2   # diff = rs1 - rs2
+[xor  t1, rs1, rs2]  # t1 = rs1 ^ rs2  (derived)
+[xor  t2, rs1, t0]   # t2 = rs1 ^ diff  (derived)
+and   t1, t1, t2     # overflow = (rs1^rs2) & (rs1^diff)
+[xor  t0, t0, t1]    # corrected = diff ^ overflow  (derived)
+[srl  rd,  t0, 31]   # rd = corrected >> 31  (derived)
+\end{lstlisting}
+
+
+\chapter{SLTU Synthesis Assembly} \label{apx:sltu-asm}
+
+\begin{lstlisting}
+sub   t0, rs1, rs2   # diff = rs1 - rs2
+[not  t1, rs1]       # t1 = ~rs1  (derived)
+and   t2, t1, rs2    # t2 = ~rs1 & rs2  (borrow generated)
+[xor  t3, rs1, rs2]  # t3 = rs1 ^ rs2  (derived)
+[not  t3, t3]        # t3 = ~(rs1 ^ rs2)  (derived)
+and   t3, t3, t0     # t3 = ~(rs1^rs2) & diff  (borrow propagated)
+or    t2, t2, t3     # borrow = generated | propagated
+[srl  rd,  t2, 31]   # rd = borrow >> 31  (derived)
+\end{lstlisting}
+
+
+\chapter{LB / LBU / LH / LHU Synthesis Assembly} \label{apx:lb-lh-asm}
+
+\begin{lstlisting}
+# lb rd, 0(rs1)  (address in rs1, byte_pos unknown at compile-time)
+addi  t0, x0, -4
+and   t0, rs1, t0         # t0 = rs1 & -4  (word-aligned)
+lw    t1, 0(t0)           # t1 = word containing the byte
+addi  t0, x0, 3
+and   t0, rs1, t0         # t0 = rs1 & 3  (byte position: 0-3)
+[sll  t0, t0, 3]          # t0 = byte_pos * 8  (bit offset)
+[srl  t1, t1, t0]         # t1 >>= bit_off  (byte in bits [7:0])
+[sll  t1, t1, 24]         # t1 <<= 24  (byte in bits [31:24])
+[sra  rd,  t1, 24]        # rd >>= 24  (sign-extend -> lb)
+                          # use [srl] in the last step for lbu (zero-extend)
+
+# lh rd, 0(rs1)  -- identical but MASK = 2, BITS = 16
+addi  t0, x0, -4
+and   t0, rs1, t0         # word-aligned
+lw    t1, 0(t0)
+addi  t0, x0, 2
+and   t0, rs1, t0         # t0 = rs1 & 2  (0 or 2: which halfword)
+[sll  t0, t0, 3]          # t0 = half_pos * 8  (0 or 16)
+[srl  t1, t1, t0]         # halfword in bits [15:0]
+[sll  t1, t1, 16]
+[sra  rd,  t1, 16]        # sign-extend -> lh  (srl for lhu)
+\end{lstlisting}
+
+
+\chapter{SB Synthesis Assembly} \label{apx:sb-asm}
+
+\begin{lstlisting}
+# sb rs2, 0(rs1)   -- address in rs1, byte position unknown at compile-time
+addi  t0, x0, -4
+and   t3, rs1, t0           # t3 = rs1 & -4  (word-aligned)
+addi  t0, x0, 3
+and   t0, rs1, t0           # t0 = rs1 & 3  (byte_pos: 0-3)
+add   t0, t0, t0            # \
+add   t0, t0, t0            #  t0 = byte_pos * 8  (constant-3 sll; no loop needed)
+add   t0, t0, t0            # /
+lw    t1, 0(t3)             # t1 = old word
+addi  t2, x0, 255           # t2 = 0xFF
+[sll  t2, t2, t0]           # t2 = 0xFF << shift  (mask)
+[not  t2, t2]               # t2 = ~mask  -- 2 insns
+and   t1, t1, t2            # t1 = old_word & ~mask  (clear target byte)
+addi  t2, x0, 255
+and   t2, rs2, t2           # t2 = rs2 & 0xFF  (isolate input byte)
+[sll  t2, t2, t0]           # t2 = byte_value << shift
+or    t1, t1, t2            # t1 = word with byte inserted
+sw    t1, 0(t3)             # write back
+\end{lstlisting}
+
+
+\chapter{SH Synthesis Assembly} \label{apx:sh-asm}
+
+\begin{lstlisting}
+# sh rs2, 0(rs1)
+addi  t0, x0, -4
+and   t3, rs1, t0           # t3 = rs1 & -4  (word-aligned)
+addi  t0, x0, 2
+and   t0, rs1, t0           # t0 = rs1 & 2  (hw_pos: 0 or 2)
+add   t0, t0, t0            # \
+add   t0, t0, t0            #  t0 = hw_pos * 8  (0 or 16; constant-3 sll)
+add   t0, t0, t0            # /
+lw    t1, 0(t3)             # t1 = old word
+lui   t2, 0x10              # \
+addi  t2, t2, -1            #  t2 = 0xFFFF
+[sll  t2, t2, t0]           # t2 = 0xFFFF << shift  (mask)
+[not  t2, t2]               # t2 = ~mask  -- 2 insns
+and   t1, t1, t2            # t1 = old_word & ~mask
+lui   t2, 0x10
+addi  t2, t2, -1            # t2 = 0xFFFF
+and   t2, rs2, t2           # t2 = rs2 & 0xFFFF
+[sll  t2, t2, t0]           # t2 = hw_value << shift
+or    t1, t1, t2            # t1 = word with halfword inserted
+sw    t1, 0(t3)             # write back
+\end{lstlisting}

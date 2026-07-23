@@ -1,0 +1,231 @@
+\chapter{Requirements Specification} \label{cap:requirements}
+
+This chapter defines the requirements for the eight GCC cross-compiler targets developed in this work.
+Each target is a modified GCC backend that accepts bare-metal freestanding C programs and produces
+machine code containing only the instructions supported by the corresponding educational processor.
+
+\section{Scope}
+
+All targets compile \textbf{bare-metal freestanding C}: programs with no standard library and no
+operating system, producing an ELF binary as output.
+
+\section{Correctness Requirements}
+
+Two independent correctness requirements apply to every target.
+
+\textbf{ISA compliance}: the compiler must never emit an instruction whose opcode is not in the
+target's allowed set. This requirement is verifiable by inspecting the assembly output.
+
+\textbf{Behavioral equivalence}: the compiled program must exhibit the same observable behavior as
+the source --- the same return values, the same memory effects, and the same control flow --- as if
+compiled for a processor that natively supports the full instruction set.
+
+\section{rvsc0 --- Basic Single-Cycle}
+
+The rvsc0 target corresponds to the eight-instruction single-cycle processor described in Chapter 4.4
+of \cite{patterson2020}, \textit{A Simple Implementation Scheme}:
+
+\begin{quote}
+In this section, we look at what might be thought of as a simple implementation of our RISC-V subset.
+[\ldots] This simple implementation covers load word (lw), store word (sw), branch if equal (beq),
+and the arithmetic-logical instructions add, sub, and, and or.
+\end{quote}
+
+\begin{table}[htb]
+\centering
+\caption{rvsc0 native instruction set}
+\label{tab:rvsc0-isa}
+\begin{tabular}{ll}
+\toprule
+\textbf{Mnemonic} & \textbf{Description} \\
+\midrule
+\texttt{lw}   & Load word \\
+\texttt{sw}   & Store word \\
+\texttt{beq}  & Branch if equal \\
+\texttt{add}  & Add \\
+\texttt{addi} & Add immediate \\
+\texttt{sub}  & Subtract \\
+\texttt{and}  & Bitwise AND \\
+\texttt{or}   & Bitwise OR \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Limitations}
+
+The rvsc0 processor has no mechanism to write the program counter --- it supports neither \texttt{jalr}
+nor any jump-and-link instruction. As a consequence, subroutine calls are architecturally impossible,
+and the set of C programs that can be compiled for rvsc0 is restricted accordingly. For all other C
+constructs, the compiler must produce correct behavior using only the native instruction set.
+
+\section{rvsc1 --- Extended Single-Cycle}
+
+The rvsc1 target extends rvsc0 with \texttt{lui} and \texttt{jalr}. These two instructions are the
+minimum addition that enables the full C calling convention: \texttt{lui} materializes 32-bit absolute
+addresses and \texttt{jalr} performs indirect jumps and encodes function returns via
+\texttt{jalr x0, 0(ra)}.
+
+\begin{table}[htb]
+\centering
+\caption{rvsc1 native instruction set}
+\label{tab:rvsc1-isa}
+\begin{tabular}{ll}
+\toprule
+\textbf{Mnemonic} & \textbf{Description} \\
+\midrule
+\texttt{lw}   & Load word \\
+\texttt{sw}   & Store word \\
+\texttt{beq}  & Branch if equal \\
+\texttt{add}  & Add \\
+\texttt{addi} & Add immediate \\
+\texttt{sub}  & Subtract \\
+\texttt{and}  & Bitwise AND \\
+\texttt{or}   & Bitwise OR \\
+\texttt{lui}  & Load upper immediate \\
+\texttt{jalr} & Jump and link register \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+With these ten instructions, the target must support the full C calling convention and general-purpose
+C programs.
+
+\section{rvsc2 --- Single-Cycle Without Fence and Control}
+
+The rvsc2 target implements the full RV32I base ISA with three groups of instructions excluded. Memory
+ordering instructions are unnecessary on a single-core single-cycle processor: omitting them is
+behavior-preserving. CSR access and system instructions require operating system support that is absent
+in the bare-metal environment.
+
+\begin{table}[htb]
+\centering
+\caption{rvsc2 native instruction set (RV32I base, excluding fence, CSR, and system groups)}
+\label{tab:rvsc2-isa}
+\begin{tabular}{ll}
+\toprule
+\textbf{Group} & \textbf{Instructions} \\
+\midrule
+Integer arithmetic & \texttt{add, sub, addi, and, andi, or, ori, xor, xori, sll, slli, srl, srli, sra, srai} \\
+Comparison         & \texttt{slt, sltu, slti, sltiu} \\
+Loads              & \texttt{lw, lh, lhu, lb, lbu} \\
+Stores             & \texttt{sw, sh, sb} \\
+Branches           & \texttt{beq, bne, blt, bge, bltu, bgeu} \\
+Jumps              & \texttt{jal, jalr} \\
+Upper immediate    & \texttt{lui, auipc} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htb]
+\centering
+\caption{rvsc2 instruction treatment}
+\label{tab:rvsc2-treatment}
+\begin{tabular}{ll}
+\toprule
+\textbf{Treatment} & \textbf{Instructions} \\
+\midrule
+Behaviorally equivalent & \texttt{fence, fence.i, sfence.vma} \\
+Rejected & \texttt{ecall, ebreak, sret, wfi}, CSR instructions (\texttt{csrrw, csrrs, csrrc, csrrwi, csrrsi, csrrci}) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{rvsc3 --- Single-Cycle rv32i}
+
+The rvsc3 target implements the complete RV32I base integer ISA \cite{riscv-spec}, including the
+memory ordering, CSR access, and system instruction groups omitted from rvsc2. No instruction
+synthesis is required: every RV32I instruction is natively supported by the hardware.
+
+\begin{table}[htb]
+\centering
+\caption{rvsc3 native instruction set (complete RV32I)}
+\label{tab:rvsc3-isa}
+\begin{tabular}{ll}
+\toprule
+\textbf{Group} & \textbf{Instructions} \\
+\midrule
+Integer arithmetic & \texttt{add, sub, addi, and, andi, or, ori, xor, xori, sll, slli, srl, srli, sra, srai} \\
+Comparison         & \texttt{slt, sltu, slti, sltiu} \\
+Loads              & \texttt{lw, lh, lhu, lb, lbu} \\
+Stores             & \texttt{sw, sh, sb} \\
+Branches           & \texttt{beq, bne, blt, bge, bltu, bgeu} \\
+Jumps              & \texttt{jal, jalr} \\
+Upper immediate    & \texttt{lui, auipc} \\
+Memory ordering    & \texttt{fence, fence.i} \\
+System             & \texttt{ecall, ebreak, wfi, sret} \\
+CSR                & \texttt{csrrw, csrrs, csrrc, csrrwi, csrrsi, csrrci} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{rvsc4 --- Single-Cycle rv64i}
+
+The rvsc4 target is a 64-bit processor implementing the full rv64i instruction set. In addition to all
+rvsc3 instructions, it natively supports:
+
+\begin{itemize}
+  \item 64-bit memory operations: \texttt{ld}, \texttt{sd}, \texttt{lwu}
+  \item Word operations with sign-extended 64-bit results: \texttt{addw}, \texttt{subw},
+        \texttt{addiw}, \texttt{sllw}, \texttt{srlw}, \texttt{sraw}, \texttt{slliw},
+        \texttt{srliw}, \texttt{sraiw}
+\end{itemize}
+
+The W-suffix variants operate on 32 bits and sign-extend the result to 64 bits, following the same
+convention as \texttt{addw}, \texttt{subw}, and the other W instructions from rvsc4.
+
+\section{rvsc5 --- Single-Cycle rv64im}
+
+The rvsc5 target extends rvsc4 with the M extension, adding native integer multiply and divide:
+
+\begin{itemize}
+  \item Multiply: \texttt{mul, mulw, mulh, mulhu, mulhsu}
+  \item Signed divide: \texttt{div, divw}
+  \item Unsigned divide: \texttt{divu, divuw}
+  \item Signed remainder: \texttt{rem, remw}
+  \item Unsigned remainder: \texttt{remu, remuw}
+\end{itemize}
+
+\section{rvsc6 --- Single-Cycle Floating-Point}
+
+The rvsc6 target extends rvsc5 with the complete F (single-precision) and D (double-precision)
+floating-point extensions as defined in \cite{riscv-spec}, supporting all arithmetic, memory,
+conversion, and comparison instructions for both precisions.
+
+\begin{itemize}
+  \item Loads/stores: \texttt{flw, fsw} (single); \texttt{fld, fsd} (double)
+  \item Arithmetic: \texttt{fadd.s, fadd.d, fsub.s, fsub.d, fmul.s, fmul.d, fdiv.s, fdiv.d,
+        fsqrt.s, fsqrt.d}
+  \item Fused multiply-add: \texttt{fmadd.s, fmadd.d, fmsub.s, fmsub.d, fnmadd.s, fnmadd.d,
+        fnmsub.s, fnmsub.d}
+  \item Sign, minimum, maximum: \texttt{fsgnj.s, fsgnj.d, fsgnjn.s, fsgnjn.d, fsgnjx.s, fsgnjx.d,
+        fmin.s, fmin.d, fmax.s, fmax.d}
+  \item Comparison and classification: \texttt{feq.s, feq.d, flt.s, flt.d, fle.s, fle.d,
+        fclass.s, fclass.d}
+  \item Move between integer and FP registers: \texttt{fmv.w.x, fmv.x.w} (single);
+        \texttt{fmv.d.x, fmv.x.d} (double)
+  \item Conversions (rv64): \texttt{fcvt.s.w, fcvt.s.wu, fcvt.s.l, fcvt.s.lu} (int to single);
+        \texttt{fcvt.w.s, fcvt.wu.s, fcvt.l.s, fcvt.lu.s} (single to int);
+        \texttt{fcvt.d.w, fcvt.d.wu, fcvt.d.l, fcvt.d.lu} (int to double);
+        \texttt{fcvt.w.d, fcvt.wu.d, fcvt.l.d, fcvt.lu.d} (double to int);
+        \texttt{fcvt.s.d, fcvt.d.s} (between single and double)
+\end{itemize}
+
+\section{rvsc7 --- Single-Cycle Atomic}
+
+The rvsc7 target extends rvsc6 with the A extension (atomic memory operations), implementing the full
+rv64imafd instruction set \cite{riscv-spec}. The \texttt{.w} variants operate on 32 bits
+(sign-extended to 64); the \texttt{.d} variants operate on 64 bits.
+
+\begin{itemize}
+  \item Load-reserved and store-conditional: \texttt{lr.w, lr.d}; \texttt{sc.w, sc.d}
+  \item AMO (atomic memory operations):
+        \texttt{amoadd.w, amoadd.d} (atomic add);
+        \texttt{amoand.w, amoand.d} (atomic AND);
+        \texttt{amoor.w, amoor.d} (atomic OR);
+        \texttt{amoxor.w, amoxor.d} (atomic XOR);
+        \texttt{amoswap.w, amoswap.d} (atomic swap);
+        \texttt{amomax.w, amomax.d} (atomic signed maximum);
+        \texttt{amomaxu.w, amomaxu.d} (atomic unsigned maximum);
+        \texttt{amomin.w, amomin.d} (atomic signed minimum);
+        \texttt{amominu.w, amominu.d} (atomic unsigned minimum)
+\end{itemize}

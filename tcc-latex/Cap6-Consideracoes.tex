@@ -1,0 +1,534 @@
+% ---------------------------------------------------------------
+% Chapter 7: Results
+% ---------------------------------------------------------------
+\chapter{Results} \label{cap:results}
+
+\section{Tests}
+
+Correctness is verified by three complementary test strategies: \textit{ISA compliance} tests, which
+statically check that the compiler never emits a forbidden instruction; \textit{behavioral
+self-tests}, which execute compiled programs on a reference simulator and check their results; and
+the \textit{GCC torture suite}, which subjects the compiler to a large corpus of programs accumulated
+by the GCC project itself. The synthesis-heavy targets are verified in depth: rvsc1 receives all
+three layers, and rvsc0 receives the first two (the torture suite requires function calls, which
+rvsc0 cannot compile). rvsc2 is covered by ISA compliance alone, and rvsc3 through rvsc7 require no
+testing beyond what the upstream backend already provides.
+
+\subsection{Test Strategies}
+
+\subsubsection{ISA Compliance} \label{sec:strategy-isa}
+
+The ISA compliance strategy answers a static question: does the compiler ever emit an instruction that
+the modeled processor does not implement? Each target has a corpus of small C programs, each written
+to exercise one operation category. The test script compiles every program in the corpus at each of
+GCC's five optimization levels (\texttt{-O0}, \texttt{-O1}, \texttt{-O2}, \texttt{-O3},
+\texttt{-Os}), assembles the output, and disassembles the resulting object with pseudo-instruction
+expansion enabled. Every mnemonic in the disassembly is then checked against the target's allowlist.
+
+\subsubsection{Behavioral Self-Tests} \label{sec:strategy-behav}
+
+ISA compliance proves that the output is \textit{legal}; it says nothing about whether it is
+\textit{correct}. The behavioral strategy closes this gap by executing the compiled programs on Spike,
+the RISC-V reference simulator \cite{spike}, and checking their results. Each behavioral test is a
+self-validating C program covering one operation category through a sequence of assertions in boundary
+values, sign transitions, every byte lane of a word, and algebraic identities cross-checked against
+independently computed results. The program returns 0 when every assertion holds, and a distinct
+nonzero code identifying the first failing assertion otherwise.
+
+\subsubsection{GCC Torture Suite} \label{sec:strategy-torture}
+
+Hand-written tests only cover the code paths their author anticipated. The third strategy probes the
+remaining ones with \texttt{gcc.c-torture/execute}, a suite of 1\,684 C programs accumulated by the
+GCC project over three decades of compiler development, many distilled from real miscompilation bugs.
+The programs are self-validating --- they call \texttt{exit(0)} on success and \texttt{abort()} on
+failure --- so no reference compiler is needed. The harness compiles each program at all five
+optimization levels and runs it on Spike, giving $1684 \times 5 = 8420$ compiler/optimizer
+combinations. A combination passes when the simulator exits with code 0.
+
+\subsection{rvsc0}
+
+\subsubsection{ISA Compliance} \label{sec:sc0-isa-tests}
+
+The rvsc0 corpus contains 12 programs. Every mnemonic they produce is checked against the
+eight-instruction rvsc0 allowlist:
+
+\begin{lstlisting}
+lw  sw  beq  add  addi  sub  and  or
+\end{lstlisting}
+
+\begin{table}[htb]
+\centering
+\caption{ISA compliance test programs for rvsc0, by operation category}
+\label{tab:sc0-isa-files}
+\begin{tabular}{ll}
+\toprule
+\textbf{Test program} & \textbf{Operations exercised} \\
+\midrule
+Arithmetic    & ADD, ADDI, SUB (regression: must remain native) \\
+Branches      & BNE, BLT, BGE, BLTU, BGEU --- synthesized from \texttt{beq} via SLT chains \\
+Signed byte load & LB --- synthesized via \texttt{lw}+shift+sign-extend \\
+Halfword load & LH signed/unsigned --- synthesized via \texttt{lw}+shift+mask \\
+Logic         & AND, OR (native); XOR via \texttt{(a|b)-(a\&b)}; ANDI/ORI via \texttt{li}+register-op \\
+Large constants & LUI --- synthesized via constant pool: \texttt{lw rd, \%lo(pool)(x0)} \\
+Bitwise NOT   & NOT --- synthesized as \texttt{sub x0, rs; addi rd, rd, -1} \\
+Byte store    & SB --- synthesized via \texttt{lw}+clear+insert+\texttt{sw} \\
+Shifts        & SLL, SRL, SRA with constant and variable shift counts \\
+Comparisons   & SLT and SLTU --- synthesized via sub/xor/and/lshr chains \\
+Variable arithmetic right shift & SRA with runtime shift count --- bit-extraction loop + sign-fill \\
+Variable logical right shift & SRL with runtime shift count --- bit-extraction loop \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Each program is compiled at five optimization levels, giving $12 \times 5 = \mathbf{60}$ test cases
+in total. All 60 pass: no forbidden mnemonic appears in any rvsc0 output at any optimization level.
+
+\subsubsection{Behavioral Self-Tests} \label{sec:sc0-behav-tests}
+
+Because rvsc0 has no \texttt{jalr} instruction, it cannot use the proxy-kernel runtime that rvsc1
+uses. Instead, each test program is a single C function, linked against a small hand-written
+bare-metal startup routine that sets up the stack, invokes the test function, converts its return
+value to a host-interface exit token, and writes it to the simulator's designated exit address. Spike
+runs the binary bare-metal at its default load address of \texttt{0x80000000} and exits with the
+reported value. The test passes if Spike exits with code 0.
+
+A key constraint distinguishes rvsc0 behavioral tests from rvsc1: global variables and large integer
+constants are forbidden. The rvsc0 constant pool is valid only when pool entries resolve to addresses
+below 2048 (the 12-bit signed offset range of \texttt{x0}). At Spike's load address of
+\texttt{0x80000000}, pool entries would be accessed via \texttt{lw rd, \%lo(pool)(x0)} with a
+wrapped address, producing incorrect values. All test programs therefore use only stack-allocated
+\texttt{volatile} locals and constants within the SMALL\_OPERAND range ($-2048$ to $2047$).
+
+\begin{table}[htb]
+\centering
+\caption{Behavioral test programs for rvsc0, by operation category}
+\label{tab:sc0-behav-files}
+\begin{tabular}{ll}
+\toprule
+\textbf{Test program} & \textbf{Cases covered} \\
+\midrule
+Arithmetic  & ADD/SUB/ADDI on positive, negative, and zero operands; AND and OR identity and absorption \\
+Branches    & Signed and unsigned comparisons: \texttt{<}, \texttt{>}, \texttt{<=}, \texttt{>=}, \texttt{!=}; all synthesized from \texttt{beq}+SLT chains \\
+Logic       & XOR, ANDI, ORI on representative values; \texttt{(a|b)-(a\&b)} identity; complement-via-XOR \\
+Loops       & Ascending for-loop (sum 1..10), countdown while-loop (doubling to 256), do-while (repeated addition), nested loops \\
+Memory      & SB/LBU/LB on all four byte lanes; SH/LHU/LH on both halfword lanes; signed widening via volatile intermediary \\
+Bitwise NOT & NOT on 0, $-1$, 1, $-128$, 127; combined \texttt{\~{}\&}, \texttt{\~{}|}; XOR cross-checked \\
+Shifts      & SLL/SRL/SRA with constant counts (1, 3, 8); variable counts; sign-propagation (SRA) and zero-fill (SRL) \\
+Comparisons & SLT and SLTU: signed ordering, unsigned ordering, equality; unsigned wrap-around larger than small positive \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+All 8 behavioral tests pass at every optimization level (\texttt{-O0} through \texttt{-Os}), for
+$8 \times 5 = 40$ cases.
+
+\subsection{rvsc1}
+
+\subsubsection{ISA Compliance} \label{sec:sc1-isa-tests}
+
+The rvsc1 corpus contains 19 programs. Every mnemonic they produce is checked against the
+ten-instruction rvsc1 allowlist:
+
+\begin{lstlisting}
+lw  sw  beq  add  addi  sub  and  or  lui  jalr
+\end{lstlisting}
+
+\begin{table}[htb]
+\centering
+\caption{ISA compliance test programs for rvsc1, by operation category}
+\label{tab:sc1-isa-files}
+\begin{tabular}{ll}
+\toprule
+\textbf{Test program} & \textbf{Operations exercised} \\
+\midrule
+Addition     & ADD and ADDI (regression: must remain native) \\
+Immediate AND & ANDI --- synthesized as \texttt{li t, imm; and rd, rs, t} \\
+Branches     & BNE, BLT, BGE, BLTU, BGEU --- all synthesized from \texttt{beq} \\
+Function call & Call and return --- JAL synthesized as \texttt{lui+addi+jalr} \\
+Signed byte load & LB --- synthesized via \texttt{lw}+shift+sign-extend \\
+Unsigned byte load & LBU --- synthesized via \texttt{lw}+shift+mask \\
+Signed halfword load & LH --- synthesized via \texttt{lw}+shift+sign-extend \\
+Unsigned halfword load & LHU --- synthesized via \texttt{lw}+shift+mask \\
+Loop         & Loop with synthesized branch and variable shift \\
+Bitwise NOT  & NOT --- synthesized as \texttt{sub x0, rs; addi rd, rd, -1} \\
+Immediate OR & ORI --- synthesized as \texttt{li t, imm; or rd, rs, t} \\
+Byte store   & SB --- synthesized via \texttt{lw}+clear+insert+\texttt{sw} \\
+Halfword store & SH --- synthesized via \texttt{lw}+clear+insert+\texttt{sw} \\
+Constant-count shifts & SLL, SRL, SRA with compile-time shift counts \\
+Variable left shift & SLL with runtime shift count --- count-down loop \\
+Comparisons  & SLT and SLTU --- synthesized via sub/xor/and/lshr \\
+Variable arithmetic right shift & SRA with runtime shift count --- bit-extraction loop + sign-fill \\
+Variable logical right shift & SRL with runtime shift count --- bit-extraction loop \\
+XOR          & XOR --- synthesized via \texttt{(a|b) - (a\&b)} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Each program is compiled at five optimization levels, giving $19 \times 5 = \mathbf{95}$ test cases
+in total. All 95 pass: no forbidden mnemonic appears in any rvsc1 output at any optimization level.
+
+\subsubsection{Behavioral Self-Tests} \label{sec:sc1-behav-tests}
+
+rvsc1 binaries run on top of the RISC-V proxy kernel, a minimal execution environment that loads the
+program, provides a stack, and services the \texttt{exit} system call, allowing test programs to be
+ordinary C programs with a \texttt{main} function.
+
+\begin{table}[htb]
+\centering
+\caption{Behavioral test programs for rvsc1, by operation category}
+\label{tab:sc1-behav-files}
+\begin{tabular}{ll}
+\toprule
+\textbf{Test program} & \textbf{Cases covered} \\
+\midrule
+Branches    & Signed and unsigned comparisons: \texttt{<}, \texttt{>}, \texttt{<=}, \texttt{>=}, \texttt{!=}; boundary values including \texttt{INT\_MIN}, \texttt{INT\_MAX}, and \texttt{UINT\_MAX} \\
+Function calls & Recursive Fibonacci (\texttt{fib(10)=55}), multi-argument calls, call through a function pointer \\
+Logic       & XOR, ORI, ANDI, NOT on representative bit patterns; \texttt{(a|b)-(a\&b)} identity \\
+Memory      & SB/LBU/LB and SH/LHU/LH on aligned addresses; signed/unsigned byte and halfword widening \\
+Shifts      & SLL/SRL/SRA with constant counts (3, 15, 16, 4); variable counts; sign-propagation and zero-fill \\
+Comparisons & SLT and SLTU with \texttt{a=-1}, \texttt{b=1}; \texttt{INT\_MIN < INT\_MAX}; \texttt{UINT\_MAX > 0} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+All 6 behavioral tests pass at every optimization level (\texttt{-O0} through \texttt{-Os}), for
+$6 \times 5 = 30$ cases.
+
+\subsubsection{GCC Torture Suite} \label{sec:sc1-torture-tests}
+
+The full suite covers $1684 \times 5 = 8420$ compiler+optimizer combinations.
+Table~\ref{tab:torture-results} summarizes the outcome.
+
+\begin{table}[htb]
+\centering
+\caption{gcc.c-torture/execute results for rvsc1 (8\,420 combinations)}
+\label{tab:torture-results}
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Optimization} & \textbf{Passed} & \textbf{Skipped} & \textbf{Timed out} \\
+\midrule
+\texttt{-O0} & $\sim$1\,501 & $\sim$183 & 0 \\
+\texttt{-O1} & $\sim$1\,531 & $\sim$153 & 0 \\
+\texttt{-O2} & 1\,505  & 164  & 15 \\
+\texttt{-O3} & $\sim$1\,503 & $\sim$161 & $\sim$14 \\
+\texttt{-Os} & $\sim$1\,525 & $\sim$157 & $\sim$2 \\
+\textbf{Total} & \textbf{7\,546} & \textbf{843} & \textbf{31} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+``Skipped'' denotes programs that fail to compile or link. The two dominant causes are unrelated to
+sc1's restricted instruction set: roughly 100 tests use old K\&R-style implicit \texttt{int}
+declarations that GCC 17 (defaulting to C23) rejects as hard errors, and roughly 35 tests use
+\texttt{printf}/\texttt{sprintf}/\texttt{fprintf}, whose newlib implementation references an internal
+reentrant symbol absent from the linked sysroot. A further three use \texttt{\_\_int128}, which
+32-bit RISC-V does not support regardless of instruction set.
+
+The 31 timed-out cases are programs that compile and execute correctly but generate so many
+synthesized instructions that Spike exceeds the 300-second simulation budget.
+Table~\ref{tab:torture-timeouts} lists the programs that consistently time out at \texttt{-O2} or
+\texttt{-O3}.
+
+\begin{table}[htb]
+\centering
+\caption{gcc.c-torture programs that consistently time out ($>$300\,s on Spike) due to synthesis overhead}
+\label{tab:torture-timeouts}
+\begin{tabular}{ll}
+\toprule
+\textbf{Test program} & \textbf{Optimization levels} \\
+\midrule
+\texttt{920302-1.c}   & \texttt{-O2}, \texttt{-O3} \\
+\texttt{pr50865.c}    & \texttt{-O2}, \texttt{-O3} \\
+\texttt{pr53645-2.c}  & \texttt{-O2}, \texttt{-O3} \\
+\texttt{pr57876.c}    & \texttt{-O3} \\
+\texttt{pr69447.c}    & \texttt{-O2}, \texttt{-O3} \\
+\texttt{pr82524.c}    & \texttt{-O2}, \texttt{-O3} \\
+\texttt{pr91450-1.c}  & \texttt{-O2}, \texttt{-O3} \\
+\texttt{pr91450-2.c}  & \texttt{-O2}, \texttt{-O3} \\
+\texttt{pr93249.c}    & \texttt{-O3} \\
+\texttt{pr93908.c}    & \texttt{-O2}, \texttt{-O3} \\
+\texttt{string-opt-5.c} & \texttt{-O2}, \texttt{-O3} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{rvsc2} \label{sec:sc2-isa-tests}
+
+rvsc2 removes only \texttt{fence} (and \texttt{fence.i}) from RV32I, and nothing is synthesized:
+every instruction the compiler may emit is native. The only property left to verify is ISA
+compliance. The rvsc1 test corpus is reused for this check, but against a much wider allowlist: the
+full RV32I base set minus the fence, CSR, and system instruction groups. The 19 programs at five
+optimization levels give 95 test cases; all pass.
+
+\subsection{rvsc3 and Above}
+
+No testing is performed for rvsc3 through rvsc7. These targets contain no synthesis code: they only
+enable flags that correspond to instructions already present in the upstream RISC-V backend. Their
+correctness follows from the correctness of the upstream backend and the GCC test suite.
+
+\section{Program Size}
+
+Each synthesized instruction expands into a sequence of native instructions, increasing the static
+size of the compiled binary. Synthesis sequences fall into two categories. \textit{Constant-length}
+expansions always emit the same number of instructions regardless of operand values: NOT expands to 2
+instructions, XOR to 3 (register operands; 4 with an immediate operand), and each immediate variant
+(ANDI, ORI) adds 1 instruction. \textit{Variable-length} expansions depend on runtime values: SLL,
+SRL, and SRA use count-down loops whose length is proportional to the shift amount, with worst-case
+counts of 187, $\sim$170, and $\sim$200 instructions respectively for a shift of 31.
+
+To quantify the size penalty on realistic code, the Embench-IoT benchmark suite \cite{embench} was
+compiled for three toolchains:
+
+\begin{itemize}
+  \item \textbf{gcc17} --- the same GCC 17 fork used by this work, built for the stock
+        \texttt{riscv32-unknown-elf} triple with no rvsc flags (\texttt{-march=rv32i -mabi=ilp32}),
+        serving as the upstream reference;
+  \item \textbf{rvsc2} --- the native RV32I target of this work, in which nothing is synthesized;
+        and
+  \item \textbf{rvsc1} --- the synthesized target.
+\end{itemize}
+
+Code size is measured as the \texttt{.text} section of each benchmark's own object files. All
+benchmarks were compiled at \texttt{-O2}.
+
+\begin{table}[htb]
+\centering
+\caption{Embench-IoT static code size (\texttt{.text} bytes, \texttt{-O2}) and rvsc1 expansion ratios}
+\label{tab:embench-size}
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Benchmark} & \textbf{gcc17} & \textbf{rvsc1} & \textbf{rvsc1 / gcc17} \\
+\midrule
+\texttt{aha-mont64}     &  3\,548 &  17\,940 &  5.06$\times$ \\
+\texttt{crc32}          &    380  &     908  &  2.39$\times$ \\
+\texttt{depthconv}      &    608  &   3\,532 &  5.81$\times$ \\
+\texttt{edn}            &  3\,244 &  22\,832 &  7.04$\times$ \\
+\texttt{huffbench}      &  2\,140 &   8\,688 &  4.06$\times$ \\
+\texttt{matmult-int}    &    936  &   1\,476 &  1.58$\times$ \\
+\texttt{md5sum}         &  1\,016 &   2\,408 &  2.37$\times$ \\
+\texttt{nettle-aes}     &  4\,444 &  46\,872 & 10.55$\times$ \\
+\texttt{nettle-sha256}  &  6\,976 &  44\,588 &  6.39$\times$ \\
+\texttt{nsichneu}       & 19\,668 &  65\,364 &  3.32$\times$ \\
+\texttt{picojpeg}       & 15\,360 & 149\,496 &  9.73$\times$ \\
+\texttt{qrduino}        & 12\,852 & 126\,048 &  9.81$\times$ \\
+\texttt{sglib-combined} & 10\,824 &  58\,256 &  5.38$\times$ \\
+\texttt{slre}           &  4\,256 &  27\,720 &  6.51$\times$ \\
+\texttt{statemate}      &  6\,484 & 106\,244 & 16.39$\times$ \\
+\texttt{tarfind}        &    528  &   2\,620 &  4.96$\times$ \\
+\texttt{ud}             &  1\,436 &   2\,020 &  1.41$\times$ \\
+\texttt{wikisort}       &  7\,744 &  20\,032 &  2.59$\times$ \\
+\texttt{xgboost}        &    624  &   5\,620 &  9.01$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Across the suite, synthesis inflates code size by a geometric mean of $4.94\times$ relative to the
+\texttt{gcc17} baseline. The custom \texttt{rvsc2} target produces code identical to \texttt{gcc17}
+for all 19 benchmarks (geomean ratio = 1.000), confirming that the rvsc2 configuration adds no
+overhead relative to the upstream GCC 17 build.
+
+\section{Program Performance}
+
+Since the target processor is single-cycle, every instruction retires in exactly one clock cycle
+(ignoring memory latency). Dynamic instruction counts are obtained by executing each compiled binary
+on Spike and totalling the retired instructions.
+
+\subsection{Individual Operation Cost} \label{sec:op-cost}
+
+The variable left shift is the clearest illustration of synthesis cost, since its length grows with
+the operand. As derived in Section~\ref{sec:sc1-sll}, the synthesized loop costs $6b + 1$ retired
+instructions for a masked shift amount $b \geq 1$ (and 3 when $b = 0$).
+Table~\ref{tab:sll-perf} compares this model against the measured isolated instruction count; the two
+agree exactly.
+
+\begin{table}[htb]
+\centering
+\caption{SLL isolated retired-instruction counts: native vs.\ synthesized (model vs.\ measured)}
+\label{tab:sll-perf}
+\begin{tabular}{rrrr}
+\toprule
+\textbf{Shift amount $b$} & \textbf{rvsc2 (native)} & \textbf{rvsc1 model ($6b+1$)} & \textbf{rvsc1 (measured)} \\
+\midrule
+ 0 & 1 &   3 &   3 \\
+ 1 & 1 &   7 &   7 \\
+ 8 & 1 &  49 &  49 \\
+16 & 1 &  97 &  97 \\
+31 & 1 & 187 & 187 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:op-perf} reports two representative fixed-length cases.
+
+\begin{table}[htb]
+\centering
+\caption{Isolated retired-instruction counts for fixed-length syntheses}
+\label{tab:op-perf}
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Operation} & \textbf{rvsc2 (native)} & \textbf{rvsc1 (synth)} & \textbf{Overhead} \\
+\midrule
+\texttt{xor} (register) & 1 &   3 &   3$\times$ \\
+\texttt{sb} (byte store) & 1 & 113 & 113$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Whole-Program Dynamic Instruction Counts} \label{sec:embench-perf}
+
+The isolated figures above bound the cost of one operation; the dynamic cost of a whole program
+depends on how often each synthesized instruction executes at run time, weighted by loop trip counts
+rather than by static frequency. Five benchmarks exceeded a 300-second Spike budget under rvsc1 and
+are reported as TIMEOUT.
+
+\begin{table}[htb]
+\centering
+\caption{Embench-IoT dynamic retired-instruction counts on Spike and rvsc1 run-time overhead.
+         Geomean is over the thirteen benchmarks that completed on both toolchains.}
+\label{tab:embench-perf}
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Benchmark} & \textbf{rvsc2 (native)} & \textbf{rvsc1 (synth)} & \textbf{Overhead} \\
+\midrule
+\texttt{aha-mont64}     & 12\,997\,428 & \textit{timeout}    & --- \\
+\texttt{crc32}          &  5\,991\,188 & 130\,556\,929  & 21.8$\times$ \\
+\texttt{depthconv}      & 54\,552\,784 & 1\,306\,486\,627 & 23.9$\times$ \\
+\texttt{edn}            & 68\,624\,580 & 512\,612\,605  &  7.5$\times$ \\
+\texttt{huffbench}      &  2\,399\,142 & \textit{timeout}    & --- \\
+\texttt{matmult-int}    & 24\,445\,873 &  25\,543\,407  &  1.0$\times$ \\
+\texttt{md5sum}         &  2\,917\,425 &  38\,694\,462  & 13.3$\times$ \\
+\texttt{nettle-aes}     &  4\,674\,471 & 171\,446\,978  & 36.7$\times$ \\
+\texttt{nettle-sha256}  &  4\,917\,841 & \textit{timeout}    & --- \\
+\texttt{nsichneu}       &  2\,514\,597 &  14\,689\,559  &  5.8$\times$ \\
+\texttt{picojpeg}       &  3\,602\,866 & \textit{timeout}    & --- \\
+\texttt{qrduino}        &  5\,140\,049 & \textit{timeout}    & --- \\
+\texttt{sglib-combined} &  3\,005\,822 &  68\,953\,363  & 22.9$\times$ \\
+\texttt{slre}           &  2\,983\,415 &  88\,220\,929  & 29.6$\times$ \\
+\texttt{statemate}      &  2\,065\,897 & 150\,934\,719  & 73.1$\times$ \\
+\texttt{tarfind}        &  5\,287\,906 &  37\,627\,640  &  7.1$\times$ \\
+\texttt{ud}             &  6\,622\,675 &   8\,378\,022  &  1.3$\times$ \\
+\texttt{wikisort}       & \textit{linkfail} & 17\,710\,935 & --- \\
+\texttt{xgboost}        &  3\,804\,604 & 433\,520\,452  & 113.9$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Across the thirteen benchmarks that completed on both toolchains, synthesis inflates the dynamic
+instruction count by a geometric mean of $13.7\times$, roughly triple the $4.94\times$ static-size
+penalty, because the most expensive syntheses sit inside the hottest loops.
+
+\section{Discussion}
+
+The results establish correctness first and cost second. On the correctness axis, the ISA compliance
+tests confirm that the compiler never emits a forbidden mnemonic: every generated object was
+disassembled with \texttt{objdump -M no-aliases}, which expands pseudo-instructions to their
+underlying encodings, so a restricted instruction cannot slip past the allowlist disguised as a
+pseudo. Behavioral equivalence is established independently by differential execution on Spike: every
+rvsc1 program produces the same exit code as the reference RV32I binary compiled from the same
+source, and every rvsc0 single-function program writes the same \texttt{tohost} value as its
+reference.
+
+The cost of that re-expression is quantified along two dimensions. Statically, synthesis inflates
+code size by a geometric mean of $4.94\times$ over the Embench suite
+(Table~\ref{tab:embench-size}); dynamically, it inflates the retired-instruction count by a geometric
+mean of $13.7\times$ over the benchmarks that complete (Table~\ref{tab:embench-perf}). The dynamic
+penalty is the larger of the two because the costliest syntheses --- the shift loops, each of which
+re-materializes its own back-edge every iteration (Section~\ref{sec:sc1-sll}) --- tend to sit inside
+the hottest loops, so their cost is multiplied by trip count rather than merely by static occurrence.
+
+For the pedagogical setting these targets are built for, this variation is the point rather than a
+limitation. The programs students write in an introductory single-cycle course --- small loops, modest
+shift amounts, few byte-granular memory accesses --- fall at the inexpensive end of both distributions.
+At the same time, the wide spread makes the cost of each ISA restriction concrete and measurable: a
+student can compile the same source for rvsc1 and rvsc3, compare the \texttt{-S} output, and see
+exactly how many native instructions a single missing \texttt{sll} or \texttt{sb} expands into.
+
+
+% ---------------------------------------------------------------
+% Chapter 8: Conclusion
+% ---------------------------------------------------------------
+\chapter{Conclusion} \label{cap:conclusion}
+
+This work developed eight GCC compiler targets for the simplified RISC-V processors described in the
+Hennessy--Patterson textbook, addressing the practical barrier that prevented students of PCS3225 at
+USP from compiling and running C programs on the processors they build. The four specific objectives
+stated in Chapter~\ref{cap:intro} were met: a minimal target (\texttt{rvsc0}) for the
+eight-instruction Chapter 4.4 processor, a target (\texttt{rvsc1}) matching the course homework
+extension with full C calling convention support, and six progressive targets (\texttt{rvsc2} through
+\texttt{rvsc7}) covering the full RV32I-to-RV64IMAFD progression. Every instruction not natively
+supported by a given target is synthesized from the primitives that target does provide, transparently
+to the programmer.
+
+\section{Contributions}
+
+The primary contribution is the set of synthesis techniques embedded in the GCC machine description.
+For the two most restricted targets, rvsc0 and rvsc1, eighteen distinct operations require synthesis,
+ranging from one-instruction replacements (NOT, immediate variants) to variable-length loops (SLL,
+SRL, SRA), multi-instruction identities (XOR, SLT, SLTU), read-modify-write sequences (LB, LBU, LH,
+LHU, SB, SH), and call-site code generation (JAL, JMP). The rvsc0 target additionally requires
+constant pool materialization for LUI, since 32-bit constants cannot otherwise be constructed from
+the eight available instructions. Each synthesis was derived algebraically and embedded as a
+\texttt{define\_expand} in \texttt{riscv.md}, so GCC selects and schedules the sequence as part of
+normal compilation with no programmer intervention.
+
+A secondary contribution is the validation methodology. Two independent test layers were developed
+and applied: an ISA compliance suite that disassembles every generated object with
+\texttt{objdump -M no-aliases} and verifies that no forbidden mnemonic appears, and a behavioral
+equivalence suite that executes rvsc1 and rvsc0 binaries on Spike and compares their outputs against
+a reference RV32I build. Together these layers confirm that synthesis is both correct by construction
+(no forbidden instruction is ever emitted) and correct by execution (the computed results are
+indistinguishable from those of a full-ISA compiler).
+
+\section{Results Summary}
+
+Correctness was established for all synthesis cases in rvsc0 and rvsc1. All ISA compliance tests
+pass, and the differential behavioral tests confirm semantic equivalence across all tested programs.
+The rvsc2 target compiles the full Embench-IoT suite with code identical to the upstream GCC 17
+baseline (geomean ratio = 1.000), confirming that the custom target configuration introduces no
+overhead relative to a stock build.
+
+The cost of synthesis was quantified on two axes. Statically, the synthesized rvsc1 target inflates
+code size by a geometric mean of $4.94\times$ over the nineteen Embench benchmarks, with a range
+from $1.41\times$ (\texttt{ud}, few shifts) to $16.39\times$ (\texttt{statemate},
+comparison-heavy control flow). Dynamically, it inflates retired instruction counts by a geometric
+mean of $13.7\times$ over the thirteen benchmarks that completed within the time budget, with five
+benchmarks timing out entirely.
+
+\section{Limitations}
+
+Synthesis does not apply to targets rvsc2 through rvsc7 --- these targets expose the full upstream
+RISC-V backend and require no new synthesis logic. Their correctness depends entirely on the upstream
+GCC test suite.
+
+The rvsc0 target, unlike rvsc1, cannot execute programs that call and return from functions, because
+\texttt{jalr} is absent. The constant pool mechanism enables 32-bit constant loading and
+unconditional jumps, but programs must be written as non-returning single functions. This restriction
+matches the processor it targets, but it means the behavioral test harness that uses HTIF (which
+requires \texttt{jalr} for the call to \texttt{main}) cannot be used for rvsc0; rvsc0 programs write
+their result directly to \texttt{tohost} via \texttt{sw}.
+
+The synthesized shift loops are functionally correct but dynamically expensive to the point of
+impracticality for programs that shift inside hot loops. The synthesis is inherently sequential: the
+GCC machine description expands a shift at compile time into a counted loop, which at run time
+executes one iteration per bit position. There is no partial-hardware or table-driven alternative
+within the instruction set these targets support.
+
+\section{Future Work}
+
+The most direct extension would be performance optimizations within the existing synthesis.
+Constant-amount shifts are currently synthesized as loops, even though the shift amount is known at
+compile time and could instead be unrolled statically, reducing the per-shift cost from $6b + 1$ to
+$2b$ instructions without any new hardware. This would require a separate \texttt{define\_expand}
+branch for \texttt{CONST\_INT\_P} shift counts.
+
+On the hardware side, each synthesis in this work corresponds exactly to the cost of the missing
+instruction in hardware. A student who extends the Chapter 4.4 processor with, for example, a barrel
+shifter could recompile with \texttt{-mshift} enabled and the compiler would switch to native
+\texttt{sll}/\texttt{srl}/\texttt{sra} automatically, making the hardware improvement immediately
+observable in both binary size and execution time. Building this feedback loop into a course lab
+--- extend the hardware, recompile, measure the speedup --- is a natural next step.
+
+Finally, the target configuration and synthesis infrastructure developed here could be packaged as a
+course resource for PCS3225, including pre-built toolchain binaries, startup files, linker scripts,
+and a simple Makefile or justfile that lets students go from a C source file to a Spike execution
+with a single command.

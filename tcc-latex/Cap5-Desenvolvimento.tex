@@ -1,0 +1,797 @@
+\chapter{Development} \label{cap:development}
+
+The rvsc0 and rvsc1 targets restrict the instruction set available to the compiler
+(Chapter~\ref{cap:requirements} specifies the complete native instruction set for each target). Every
+C construct the compiler may emit must be realized using only those native instructions; for every
+excluded instruction, GCC synthesizes an equivalent sequence at compile time. This chapter presents
+the tools and infrastructure used, the mathematical derivation and proof of each synthesis, the GCC
+implementation that makes the process transparent to the programmer, and the known limitations of each
+target.
+
+\section{Technologies Used}
+
+\subsection{GCC 17.0.0}
+
+The custom targets are implemented as a backend extension to GCC 17.0.0. GCC is chosen because it is
+the dominant open-source compiler for embedded and systems software and because its machine description
+framework provides a declarative mechanism for defining instruction synthesis rules that is already
+present in the upstream RISC-V backend. The following files in the GCC source tree were modified or
+added:
+
+\begin{table}[htb]
+\centering
+\caption{GCC source files modified or added for this project}
+\label{tab:gcc-files}
+\begin{tabular}{ll}
+\toprule
+\textbf{File} & \textbf{Role} \\
+\midrule
+\texttt{gcc/config/riscv/riscv.md}  & Machine description: synthesis patterns and native instruction guards \\
+\texttt{gcc/config/riscv/riscv.opt} & Option declarations: per-synthesis boolean flags \\
+\texttt{gcc/config/riscv/riscv.cc}  & Target hooks: constant pool handling for LUI synthesis \\
+\texttt{gcc/config/riscv/rvscN.h}   & Per-target headers: \texttt{CC1\_SPEC} injecting \texttt{-mno-*} flags automatically \\
+\texttt{gcc/config/config.gcc}      & Triple mapping: \texttt{rvscN-*-elf*} to \texttt{cpu\_type=riscv} \\
+\texttt{gcc/config/config.sub}      & Triple normalisation: recognises \texttt{rvscN} as a valid CPU name \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{GNU Binutils (riscv32/64-none-elf)}
+
+The upstream GNU binutils cross toolchain is used without modification as the assembler and linker.
+The binutils triple differs from the compiler triple: \texttt{riscv32-none-elf} for rvsc0--rvsc3 and
+\texttt{riscv64-none-elf} for rvsc4--rvsc7.
+
+\subsection{Spike 1.1.1-dev}
+
+Spike is the official RISC-V ISA reference simulator \cite{spike}. It implements the full
+RV64IMAFD instruction set, making it suitable as the behavioral oracle: a binary compiled by
+\texttt{rvsc1-unknown-elf-gcc} contains only valid RV32I instructions (the synthesis sequences are
+themselves valid RV32I), so Spike can execute it and report the correct result. Spike is invoked with
+\texttt{--isa=rv32i} for rvsc0--rvsc3 tests, and with \texttt{--log-commits} to count retired
+instructions for performance measurements.
+
+\section{Toolchain Installation}
+
+\subsection{Repository Setup}
+
+The GCC backend modifications live in a fork of the upstream GCC repository:
+
+\begin{lstlisting}[language=bash]
+git clone https://github.com/guissalustiano/gcc-hannersy-paterson gcc
+\end{lstlisting}
+
+The GNU Binutils source is cloned separately and is required for all targets, since GCC must invoke
+the target assembler during compilation:
+
+\begin{lstlisting}[language=bash]
+git clone https://sourceware.org/git/binutils-gdb.git binutils-gdb
+\end{lstlisting}
+
+Both repositories should sit side by side in the same parent directory. The build directories and
+installed toolchains are placed inside a per-target subdirectory:
+
+\begin{lstlisting}
+project/
++-- gcc/              <- GCC fork (source, never built in-tree)
++-- binutils-gdb/     <- binutils source
++-- targets/
+    +-- rvsc2/
+        +-- build-binutils/   <- binutils out-of-tree build
+        +-- build/            <- GCC out-of-tree build
+        +-- install/          <- installed toolchain (bin/, lib/, ...)
+\end{lstlisting}
+
+\subsection{Building Binutils}
+
+Binutils must be built and installed before GCC so that GCC's configure step can detect the target
+assembler and linker.
+
+\begin{lstlisting}[language=bash]
+mkdir -p targets/rvsc2/build-binutils
+cd targets/rvsc2/build-binutils
+
+../../binutils-gdb/configure \
+    --target=rvsc2-unknown-elf \
+    --prefix=$(pwd)/../install \
+    --disable-nls \
+    --disable-gdb
+
+make -j$(nproc)
+make install
+\end{lstlisting}
+
+After this step the install prefix contains the target assembler, linker, and binutils utilities
+(\texttt{rvsc2-unknown-elf-as}, \texttt{rvsc2-unknown-elf-ld}, etc.).
+
+\subsection{Building GCC}
+
+With the assembler and linker installed, GCC can be configured and built. The three
+\texttt{--disable-*} flags prevent GCC from attempting to rebuild its own copies of the binutils
+components from the source tree (the GCC repository bundles a copy of binutils), which avoids
+duplicate build failures and unnecessary compilation time.
+
+\begin{lstlisting}[language=bash]
+mkdir -p targets/rvsc2/build
+cd targets/rvsc2/build
+
+PATH="$(pwd)/../install/bin:$PATH" \
+../../gcc/configure \
+    --target=rvsc2-unknown-elf \
+    --prefix=$(pwd)/../install \
+    --enable-languages=c \
+    --with-newlib \
+    --disable-binutils \
+    --disable-ld \
+    --disable-gas
+
+make all-gcc -j$(nproc)
+make install-gcc
+\end{lstlisting}
+
+Prepending the install prefix to \texttt{PATH} before configure allows the configure script to detect
+the pre-installed \texttt{rvsc2-unknown-elf-as} and \texttt{rvsc2-unknown-elf-ld} binaries, preventing
+it from scheduling them for in-tree compilation.
+
+\subsection{Building Newlib and libgcc}
+
+With GCC installed, the C runtime library (newlib) and the compiler support library (libgcc) can be
+built. Both are required to link executable programs.
+
+\begin{lstlisting}[language=bash]
+mkdir -p targets/rvsc2/build-newlib
+cd targets/rvsc2/build-newlib
+
+PATH="$(pwd)/../install/bin:$PATH" \
+../../newlib-src/configure \
+    --target=rvsc2-unknown-elf \
+    --prefix=$(pwd)/../install \
+    --disable-multilib \
+    --disable-newlib-supplied-syscalls
+
+PATH="$(pwd)/../install/bin:$PATH" make -j$(nproc)
+PATH="$(pwd)/../install/bin:$PATH" make install
+\end{lstlisting}
+
+With newlib installed, libgcc can be built against it:
+
+\begin{lstlisting}[language=bash]
+cd targets/rvsc2/build
+
+PATH="$(pwd)/../install/bin:$PATH" make all-target-libgcc -j$(nproc)
+PATH="$(pwd)/../install/bin:$PATH" make install-target-libgcc
+\end{lstlisting}
+
+After all four steps the toolchain is fully self-contained under \texttt{targets/rvsc2/install/bin/}.
+Compiling a C program to a RISC-V object file requires only:
+
+\begin{lstlisting}[language=bash]
+PATH="targets/rvsc2/install/bin:$PATH" \
+rvsc2-unknown-elf-gcc -O2 -ffreestanding -c program.c -o program.o
+\end{lstlisting}
+
+\section{Synthesis Derivations} \label{sec:sc1-synthesis}
+
+\textbf{Assembly notation.} In the listings below, \texttt{rd}, \texttt{rs1}, and \texttt{rs2} denote
+the canonical destination and source registers. Registers \texttt{t0}--\texttt{t5} are temporaries
+chosen for readability. In the actual GCC machine description, all temporaries are allocated as
+pseudo-registers via \texttt{gen\_reg\_rtx(SImode)}. The register allocator maps them to physical
+registers, resolving aliasing conflicts automatically. The bracket notation \texttt{[op ...]} marks
+an instruction that is itself synthesized, its expansion is defined in the subsection that covers that
+operation.
+
+\subsection{Arithmetic}
+
+Arithmetic synthesis operations assign values only to registers and carry no memory side-effects. They
+can be replaced by equivalent sequences without additional constraints.
+
+\subsubsection{Bitwise NOT} \label{sec:sc1-not}
+
+The standard RISC-V pseudo-instruction \texttt{not rd, rs1} expands to \texttt{xori rd, rs1, -1}.
+Neither sc0 nor sc1 include \texttt{xori}, so a different derivation is required.
+
+\textbf{Proof.} In two's complement, negation satisfies $-x = \mathord{\sim}x + 1$ for all $x$.
+Rearranging: $\mathord{\sim}x = -x - 1$. Both subtraction from zero (\texttt{sub rd, x0, rs1}) and
+decrement by one (\texttt{addi rd, rd, -1}) are available in sc0 and sc1. $\square$
+
+\begin{lstlisting}
+sub  rd, x0, rs1    # rd = -rs1
+addi rd, rd, -1     # rd = -rs1 - 1 = ~rs1
+\end{lstlisting}
+
+The synthesis costs 2 static instructions and requires no extra registers. It applies to both rvsc0
+and rvsc1.
+
+\subsubsection{XOR ($\mathtt{R[rd] = R[rs1] \oplus R[rs2]}$)} \label{sec:sc1-xor}
+
+Neither sc0 nor sc1 include \texttt{xor} or \texttt{xori}.
+
+\textbf{Proof.} Claim: $a \oplus b = (a \mid b) - (a \mathbin{\&} b)$ for all 32-bit words $a, b$,
+where the subtraction is ordinary two's-complement subtraction.
+
+Fix a bit position $i$ and write $x = a_i, y = b_i \in \{0, 1\}$. Case analysis over the four
+combinations of $x, y$:
+
+\begin{table}[htb]
+\centering
+\caption{Truth table establishing $(a \mid b) - (a \mathbin{\&} b) = a \oplus b$ bitwise}
+\label{tab:xor-truth}
+\begin{tabular}{ccccc}
+\toprule
+$a_i$ & $b_i$ & $(a \mid b)_i$ & $(a \mathbin{\&} b)_i$ & $(a \mid b)_i - (a \mathbin{\&} b)_i$ \\
+\midrule
+0 & 0 & 0 & 0 & 0 \\
+0 & 1 & 1 & 0 & 1 \\
+1 & 0 & 1 & 0 & 1 \\
+1 & 1 & 1 & 1 & 0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The last column matches $a \oplus b$ in every row, so the identity holds per bit. Moreover
+$(a \mathbin{\&} b)_i = 1$ implies $(a \mid b)_i = 1$ in every row --- the 1-bits of $a \mathbin{\&}
+b$ are always a subset of the 1-bits of $a \mid b$. Consequently the per-bit subtraction never needs
+to borrow from a neighboring bit position; interpreting $a \mid b$ and $a \mathbin{\&} b$ as 32-bit
+binary numbers, the ordinary two's-complement subtraction \texttt{sub rd, ab\_ior, ab\_and} computes
+exactly the bitwise difference, with no cross-bit borrow propagation. Hence the instruction-level
+subtraction yields $a \oplus b$ exactly, for every $a, b$. $\square$
+
+\begin{lstlisting}
+and  t0, rs1, rs2   # t0 = rs1 & rs2
+or   rd, rs1, rs2   # rd = rs1 | rs2
+sub  rd, rd, t0     # rd = (rs1 | rs2) - (rs1 & rs2) = rs1 ^ rs2
+\end{lstlisting}
+
+The register-operand form costs 3 static instructions and 1 extra register. When the second operand
+is an immediate, a \texttt{li} is prepended, raising the cost to 4 instructions and 2 extra
+registers. The synthesis applies to both rvsc0 and rvsc1.
+
+\subsubsection{Shifts: SLL, SRL, SRA} \label{sec:sc1-shifts}
+
+Neither sc0 nor sc1 include any shift instruction. All three variants are synthesized from
+\texttt{add}, \texttt{addi}, \texttt{sub}, and \texttt{beq}.
+
+\textbf{Note on shift-count range.} The C standard (ISO C11 \S6.5.7) states that shifting a 32-bit
+value by a count equal to or greater than 32 is undefined behavior; a conforming C program never
+triggers this case. The synthesis sequences nonetheless mask the shift count to the range $[0, 31]$
+via \texttt{and t, rs2, 31}, matching the hardware behavior of native RV32I shift instructions.
+
+\paragraph{Logical Left Shift (SLL)} \label{sec:sc1-sll}
+
+\texttt{sll rd, rs1, rs2} computes $\mathit{rd} = \mathit{rs1} \ll \mathit{rs2}$ (zero-fill from
+the right).
+
+\textbf{Proof by induction.} Let $\text{sll}(x, n)$ denote $x$ left-shifted by $n$ positions. Claim:
+$\text{sll}(x, n) = x \cdot 2^n \pmod{2^{32}}$.
+
+\begin{itemize}
+  \item \textit{Base case} $(n = 0)$: $\text{sll}(x, 0) = x = x \cdot 2^0$. $\checkmark$
+  \item \textit{Inductive step}: Assume $\text{sll}(x, n) = x \cdot 2^n$. Then
+        $\text{sll}(x, n+1) = \text{sll}(x, n) + \text{sll}(x, n) = 2 \cdot x \cdot 2^n =
+        x \cdot 2^{n+1}$. $\checkmark$
+\end{itemize}
+
+The synthesis implements this recursion as a count-down loop in which each iteration doubles
+\texttt{rd} via \texttt{add rd, rd, rd}. $\square$
+
+\begin{lstlisting}[language=C]
+uint32_t sll(uint32_t rs1, uint32_t rs2) {
+    rs2 &= 31u;           // C11 S6.5.7: mask to [0, 31]
+    uint32_t rd = rs1;
+    for (uint32_t i = 0; i < rs2; i++) rd += rd;
+    return rd;
+}
+\end{lstlisting}
+
+The resulting assembly sequence is listed in Appendix~\ref{apx:sll-asm}.
+
+Let $b$ denote the masked shift amount. Each loop iteration performs the doubling (\texttt{add}),
+decrements the counter (\texttt{addi}), and tests it (\texttt{beq}); because sc1 has no native
+unconditional jump (\texttt{jal} and \texttt{auipc} are both absent), the back-edge to the top of
+the loop is itself synthesized as \texttt{lui + addi + jr} (three instructions). Every iteration
+therefore costs 6 instructions, except the final one, which exits through the taken \texttt{beq} and
+skips the back-jump. With the mask and guard setup this gives $6b + 1$ instructions for $b \geq 1$,
+a minimum of 3 when $b = 0$ and a maximum of 187 when $b = 31$, at the cost of one extra register.
+
+\paragraph{Logical Right Shift (SRL)} \label{sec:sc1-srl}
+
+\texttt{srl rd, rs1, rs2} computes $\mathit{rd} = \mathit{rs1} \gg \mathit{rs2}$ (zero-fill from
+the left). A right shift cannot be synthesized by repeated halving, because integer division by two
+would floor rather than truncate, producing incorrect results for odd values. Instead, output bit $i$
+is copied from input bit $i + s$ using two single-bit masks that scan upward together.
+
+\textbf{Proof of correctness.} The algorithm maintains \texttt{out\_mask} (scanning output bits from
+0 upward) and \texttt{in\_mask} (scanning input bits from $s$ upward). At each step, if
+\texttt{x \& in\_mask} $\neq$ 0, input bit $i+s$ is set and the algorithm sets
+\texttt{result |= out\_mask}. Both masks then advance ($\ll\!\!= 1$). The loop terminates when
+\texttt{in\_mask} overflows past bit 31 (becoming 0), meaning all input positions at or above $s$
+have been processed. Output bits 0 through $31 - s$ are set from the corresponding input bits; bits
+above $31 - s$ are never set (their input positions have overflowed), correctly implementing
+zero-fill. $\square$
+
+\begin{lstlisting}[language=C]
+uint32_t srl(uint32_t x, uint32_t shift) {
+    shift = shift & 31u;      // C11 S6.5.7: mask to [0, 31]
+    uint32_t result   = 0;
+    uint32_t out_mask = 1u;
+    uint32_t in_mask  = 1u << shift;   // [sll]
+    while (in_mask != 0) {
+        if ((x & in_mask) != 0) result |= out_mask;
+        out_mask <<= 1;   // [sll]
+        in_mask  <<= 1;   // [sll]
+    }
+    return result;
+}
+\end{lstlisting}
+
+The resulting assembly sequence is listed in Appendix~\ref{apx:srl-asm}. The worst-case total is
+approximately 170 instructions, requiring five extra registers.
+
+\paragraph{Arithmetic Right Shift (SRA)} \label{sec:sc1-sra}
+
+\texttt{sra rd, rs1, rs2} computes the arithmetic right shift: identical to \texttt{srl} but vacated
+upper bits are filled with the sign bit rather than zero.
+
+\textbf{Proof.} Let $s$ be the masked shift count and $b_{31}$ the sign bit of \texttt{rs1}.
+Arithmetic right shift sets output bit $i$ to input bit $\min(i+s, 31)$. For $i \leq 31-s$ this
+equals the \texttt{srl} result. For $i > 31-s$, all upper bits equal $b_{31}$.
+
+If $b_{31} = 0$, the \texttt{srl} result already has all upper bits zero; no correction is needed.
+
+If $b_{31} = 1$, the upper $s$ bits must be 1. The mask $(-1) \ll (32 - s)$ has exactly the top $s$
+bits set, since $-1$ in two's complement is all-ones, and left-shifting by $k$ clears the low $k$
+bits. OR-ing this mask into the \texttt{srl} result sets the upper $s$ bits correctly. $\square$
+
+\begin{lstlisting}[language=C]
+uint32_t sra(uint32_t x, uint32_t shift) {
+    shift = shift & 31u;
+    uint32_t result = srl(x, shift);
+    if (shift == 0 || (x >> 31) == 0) return result;
+    // OR in the top 'shift' bits: left-shifting -1 leaves exactly those bits set
+    uint32_t sign_mask = (uint32_t)(-1) << (32u - shift);
+    return result | sign_mask;
+}
+\end{lstlisting}
+
+The resulting assembly sequence is listed in Appendix~\ref{apx:sra-asm}. The synthesis reuses the
+full SRL expansion and appends roughly 25 additional instructions for sign-bit extraction and
+sign-mask construction, reaching a worst-case total of approximately 200 instructions at the cost of
+six extra registers.
+
+\subsection{Comparisons} \label{sec:sc1-comparisons}
+
+\subsubsection{SLT and SLTU} \label{sec:sc1-slt}
+
+\texttt{slt rd, rs1, rs2} sets \texttt{rd = 1} if \texttt{rs1 < rs2} (signed comparison), else
+\texttt{rd = 0}. Neither sc0 nor sc1 include \texttt{slt} or \texttt{slti}.
+
+\textbf{Proof.} Let $\mathit{diff} = \mathit{rs1} - \mathit{rs2}$ (32-bit two's complement). Without
+overflow, the sign bit of $\mathit{diff}$ correctly indicates the comparison: $\mathit{diff}_{31} = 1$
+iff $\mathit{rs1} < \mathit{rs2}$. Signed overflow occurs when the operands have different signs and
+the result has the same sign as $\mathit{rs2}$. The expression
+$\mathit{overflow} = (\mathit{rs1} \oplus \mathit{rs2}) \mathbin{\&} (\mathit{rs1} \oplus
+\mathit{diff})$ has MSB 1 exactly when overflow occurred. XOR-ing $\mathit{diff}$ with
+$\mathit{overflow}$ flips the sign bit iff overflow occurred, yielding the corrected result.
+Verification by case analysis on the sign bits of $a = \mathit{rs1}$ and $b = \mathit{rs2}$:
+
+\begin{itemize}
+  \item $(a \geq 0, b \geq 0)$: subtraction cannot overflow; $\mathit{overflow}_{31} = 0$; result
+        $= \mathit{diff}_{31}$. Correct.
+  \item $(a < 0, b < 0)$: same analysis. Correct.
+  \item $(a \geq 0, b < 0)$: $a \geq b$ always; result must be 0. If overflow:
+        $\mathit{diff}_{31} = 1$ (wrong). $(a \oplus b)_{31} = 1$ (signs differ); $(a \oplus
+        \mathit{diff})_{31} = 1$; so $\mathit{overflow}_{31} = 1$ and
+        $\mathit{corrected}_{31} = 1 \oplus 1 = 0$. Correct.
+  \item $(a < 0, b \geq 0)$: $a < b$ always; result must be 1. If underflow:
+        $\mathit{diff}_{31} = 0$ (wrong); $\mathit{overflow}_{31} = 1$;
+        $\mathit{corrected}_{31} = 0 \oplus 1 = 1$. Correct. If no underflow:
+        $\mathit{diff}_{31} = 1$; $\mathit{overflow}_{31} = 0$;
+        $\mathit{corrected}_{31} = 1$. Correct. $\square$
+\end{itemize}
+
+\begin{lstlisting}[language=C]
+uint32_t slt(uint32_t a, uint32_t b) {
+    uint32_t diff      = a - b;
+    uint32_t overflow  = (a ^ b) & (a ^ diff);   // MSB = 1 iff signed overflow
+    uint32_t corrected = diff ^ overflow;
+    return corrected >> 31;
+}
+\end{lstlisting}
+
+The resulting assembly sequence is listed in Appendix~\ref{apx:slt-asm}.
+
+\texttt{sltu rd, rs1, rs2} performs the same comparison treating both operands as unsigned.
+
+\textbf{Proof.} \texttt{rs1 < rs2} (unsigned) iff the subtraction \texttt{rs1 - rs2} generates a
+borrow at the MSB. A borrow is \textit{generated} at bit $i$ when $\mathit{rs1}_i = 0$ and
+$\mathit{rs2}_i = 1$, captured by $\mathord{\sim}\mathit{rs1} \mathbin{\&} \mathit{rs2}$. A borrow
+is \textit{propagated} when $\mathit{rs1}_i = \mathit{rs2}_i$ and a borrow arrived from below,
+captured by $\mathord{\sim}(\mathit{rs1} \oplus \mathit{rs2}) \mathbin{\&} \mathit{diff}$. The MSB
+of their union is 1 iff \texttt{rs1 < rs2} (unsigned). $\square$
+
+\begin{lstlisting}[language=C]
+uint32_t sltu(uint32_t a, uint32_t b) {
+    uint32_t diff   = a - b;
+    uint32_t borrow = (~a & b) | (~(a ^ b) & diff);
+    return borrow >> 31;
+}
+\end{lstlisting}
+
+The resulting assembly sequence is listed in Appendix~\ref{apx:sltu-asm}.
+
+Both expansions are expensive: \texttt{slt} requires approximately 60 instructions and three extra
+registers (t0--t2), while \texttt{sltu} requires approximately 70 instructions and four extra
+registers (t0--t3).
+
+\subsubsection{BNE} \label{sec:sc1-bne}
+
+\texttt{bne rs1, rs2, target} jumps iff \texttt{rs1} $\neq$ \texttt{rs2}.
+
+\textbf{Equivalence.} \texttt{rs1} $\neq$ \texttt{rs2} iff \texttt{rs1 - rs2} $\neq$ 0. If the
+difference is zero, \texttt{beq} falls through (skip the jump); otherwise an unconditional
+\texttt{beq x0, x0, target} is taken.
+
+\begin{lstlisting}
+sub  t0, rs1, rs2
+beq  t0, x0, skip    # rs1 == rs2: skip
+beq  x0, x0, target  # unconditional jump
+skip:
+\end{lstlisting}
+
+The expansion costs 3 instructions and one extra register.
+
+\subsubsection{BLT, BGE, BLTU, BGEU} \label{sec:sc1-ordered-branches}
+
+Each ordered branch is synthesized using \texttt{[slt]} or \texttt{[sltu]} followed by a \texttt{beq}
+or \texttt{bne} test.
+
+\textbf{Equivalence.} A ``branch if less-than'' is equivalent to computing the comparison into a
+register and branching on that register being nonzero; ``branch if greater-than-or-equal'' branches
+when the comparison is zero (i.e., the ``not less-than'' case).
+
+\begin{table}[htb]
+\centering
+\caption{Ordered branch syntheses via \texttt{[slt]} and \texttt{[sltu]}}
+\label{tab:ordered-branches}
+\begin{tabular}{lll}
+\toprule
+\textbf{Branch} & \textbf{Condition} & \textbf{Synthesis} \\
+\midrule
+\texttt{blt rs1, rs2, L}  & \texttt{rs1 < rs2} (signed)    & \texttt{[slt t, rs1, rs2]}; \texttt{bne t, x0, L} \\
+\texttt{bge rs1, rs2, L}  & \texttt{rs1 >= rs2} (signed)   & \texttt{[slt t, rs1, rs2]}; \texttt{beq t, x0, L} \\
+\texttt{bltu rs1, rs2, L} & \texttt{rs1 < rs2} (unsigned)  & \texttt{[sltu t, rs1, rs2]}; \texttt{bne t, x0, L} \\
+\texttt{bgeu rs1, rs2, L} & \texttt{rs1 >= rs2} (unsigned) & \texttt{[sltu t, rs1, rs2]}; \texttt{beq t, x0, L} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Immediate Variants} \label{sec:sc1-immediates}
+
+The instructions \texttt{andi}, \texttt{ori}, \texttt{xori}, \texttt{slli}, \texttt{srli},
+\texttt{srai}, \texttt{slti}, and \texttt{sltiu} encode a register together with a 12-bit signed
+immediate. Neither sc0 nor sc1 support any of these forms. Each is synthesized by loading the
+immediate into a temporary register via \texttt{addi} and calling the corresponding
+register--register variant:
+
+\begin{lstlisting}
+# Example: andi rd, rs1, imm  ->
+addi  t0, x0, imm
+and   rd, rs1, t0
+\end{lstlisting}
+
+Since \texttt{addi} encodes 12-bit signed immediates (range $-2048$ to $2047$) and all of these
+instruction forms share the same I-type 12-bit field, every immediate fits directly, at the cost of
+one extra \texttt{addi} instruction and one extra register per immediate variant.
+
+\subsection{Loads} \label{sec:sc1-loads}
+
+\subsubsection{LUI (rvsc0 only)} \label{sec:sc0-lui}
+
+\texttt{lui rd, imm20} sets $\mathit{rd} = \mathit{imm20} \ll 12$. The instruction is native in
+rvsc1; synthesis is required only for rvsc0. Since rvsc0 also lacks \texttt{jalr}, function calls
+are impossible; LUI synthesis is primarily needed to materialize large constants or absolute memory
+addresses.
+
+\textbf{Derivation.} Since \texttt{addi} encodes only 12-bit signed immediates (range $-2048$ to
+$2047$), a 20-bit immediate cannot be loaded in one instruction. The constant-pool approach stores
+the full 32-bit value (\texttt{imm20 << 12}) in the \texttt{.rodata} section at link time and
+replaces the entire sequence with a single load:
+
+\begin{lstlisting}
+lw    rd, pool_entry(x0)  # rd = *(pool_entry)
+\end{lstlisting}
+
+This requires that \texttt{pool\_entry} fits in a 12-bit signed offset from \texttt{x0} (address $<
+2048$), which holds for the short programs typical of the educational processor. The constant-pool
+approach was chosen over a multi-instruction \texttt{addi}+shift sequence because it produces a
+single instruction at each use site and avoids shift instructions that rvsc0 does not support.
+
+\subsubsection{LB, LBU, LH, LHU} \label{sec:sc1-lb-synthesis}
+
+Since sc1 supports only \texttt{lw} (32-bit word loads), every byte or halfword load is synthesized
+in four steps: align the address to a word boundary, load the word, extract the target unit by shift,
+and sign-extend or zero-extend.
+
+\textbf{Proof of correctness.} The expression \texttt{addr \& \~{}3u} clears the two low-order bits,
+yielding the address of the word that contains the byte or halfword at \texttt{addr}. The unit's
+position within the word is \texttt{addr \& MASK} (MASK = 3 for bytes, 2 for halfwords), and its bit
+offset is \texttt{(addr \& MASK) * 8}. Right-shifting the word by this amount moves the target unit
+to bits $[N-1:0]$ where $N$ is 8 or 16. A subsequent shift pair of $32-N$ bits --- left then right
+--- isolates the unit and performs either sign extension (arithmetic right shift, for \texttt{lb}/
+\texttt{lh}) or zero extension (logical right shift, for \texttt{lbu}/\texttt{lhu}). This is correct
+for any address alignment because the memory model is little-endian and the bit offset exactly encodes
+the unit's position within the word. $\square$
+
+\begin{lstlisting}[language=C]
+/* Common algorithm for lb/lbu/lh/lhu */
+uint32_t aligned  = addr & ~3u;           // word-aligned: addr & -4
+uint32_t word     = lw(aligned);          // lw 0(aligned)
+uint32_t unit_off = addr & MASK;          // MASK = 3 for byte, 2 for halfword
+uint32_t bit_off  = unit_off * 8;         // least-significant bit position
+uint32_t shifted  = word >> bit_off;      // [srl] extracts unit to bits [N:0]
+// lbu/lhu: zero-extend via symmetric shift
+uint32_t result   = (shifted << BITS) >> BITS;  // logical: [srl]
+// lb/lh:  sign-extend via arithmetic shift
+int32_t  result   = (int32_t)(shifted << BITS) >> BITS;  // arithmetic: [sra]
+// BITS = 24 for byte (QImode), 16 for halfword (HImode)
+\end{lstlisting}
+
+The resulting assembly sequences are listed in Appendix~\ref{apx:lb-lh-asm}. Since sc1 shifts are
+themselves synthesized via \texttt{add}/\texttt{beq} loops, each byte load expands to approximately
+70--80 instructions.
+
+\subsection{Stores} \label{sec:sc1-stores}
+
+\subsubsection{SB and SH} \label{sec:sc1-sb}
+
+A byte store (\texttt{sb}) or halfword store (\texttt{sh}) is implemented as a read-modify-write:
+load the word containing the target location, clear the target bits, insert the new value, and write
+back. The bit offset is computed at runtime since the base address is unknown at compile time.
+
+\textbf{Proof of correctness.} Let \texttt{word} be the current word at the aligned address,
+\texttt{mask} the bit-field covering the target unit (e.g., \texttt{0xFF << shift} for a byte), and
+\texttt{val} the new value to write. The expression $(\mathtt{word} \mathbin{\&} \mathord{\sim}
+\mathtt{mask}) \mid (\mathtt{val} \mathbin{\&} \mathtt{mask})$ replaces exactly the target bits with
+\texttt{val} while preserving all others. For each bit $i$: if $\mathtt{mask}_i = 1$, then
+$(\mathtt{word} \mathbin{\&} \mathord{\sim}\mathtt{mask})_i = 0$ and $(\mathtt{val} \mathbin{\&}
+\mathtt{mask})_i = \mathtt{val}_i$, yielding $\mathtt{val}_i$; if $\mathtt{mask}_i = 0$, then
+$(\mathtt{val} \mathbin{\&} \mathtt{mask})_i = 0$ and $(\mathtt{word} \mathbin{\&}
+\mathord{\sim}\mathtt{mask})_i = \mathtt{word}_i$, yielding $\mathtt{word}_i$. $\square$
+
+\begin{lstlisting}[language=C]
+void sb(uint8_t *addr, uint32_t rs2) {
+    uint32_t aligned_addr = (uint32_t)addr & ~3u;   // addr & -4
+    uint32_t byte_pos     = (uint32_t)addr & 3u;    // runtime: 0-3
+    uint32_t shift        = byte_pos * 8u;           // runtime: 0,8,16,24
+    uint32_t old_word     = *(uint32_t *)aligned_addr;     // lw
+    uint32_t byte_mask    = 0xFFu << shift;                // [sll] runtime shift
+    uint32_t new_byte     = (rs2 & 0xFFu) << shift;        // [sll] runtime shift
+    uint32_t new_word     = (old_word & ~byte_mask) | new_byte;
+    *(uint32_t *)aligned_addr = new_word;                   // sw
+}
+\end{lstlisting}
+
+The resulting assembly sequence is listed in Appendix~\ref{apx:sb-asm}. The expansion requires one
+extra \texttt{lw} and one extra \texttt{sw}, totalling approximately 100 instructions and three extra
+registers (t0--t2).
+
+The \texttt{sh} synthesis follows the same read-modify-write pattern with \texttt{MASK = 2} and mask
+constant \texttt{0xFFFF}. Since \texttt{0xFFFF} exceeds the 12-bit \texttt{addi} range, it is
+materialized via \texttt{lui 0x10; addi -1}. The resulting assembly sequence is listed in
+Appendix~\ref{apx:sh-asm}. The expansion likewise totals approximately 105 instructions and three
+extra registers (t0--t2).
+
+\subsection{Control Flow} \label{sec:sc1-jump}
+
+\subsubsection{JAL} \label{sec:sc1-jal}
+
+\texttt{jal ra, target} saves the return address (\texttt{PC + 4}) into \texttt{ra} and jumps to
+\texttt{target}. rvsc1 does not support \texttt{auipc}-based PC-relative addressing; \texttt{jal}
+must therefore be synthesized from \texttt{lui}, \texttt{addi}, and \texttt{jalr}.
+
+\textbf{Equivalence.} The semantics of \texttt{jal ra, target} are: $\mathit{ra} \leftarrow
+\mathit{PC} + 4$; $\mathit{PC} \leftarrow \mathit{target}$. Since \texttt{lui}+\texttt{addi} can
+materialize any 32-bit absolute address, the two effects can be split: materialize the return address
+into \texttt{ra} before the jump, then jump to \texttt{target} via \texttt{jalr}.
+
+\begin{lstlisting}
+# jal ra, target  ->
+lui   ra,  %hi(back)       # ra[31:12] = upper bits of (PC+4)
+addi  ra,  ra, %lo(back)   # ra = PC+4
+lui   t0,  %hi(target)
+addi  t0,  t0, %lo(target)
+jalr  x0,  0(t0)           # PC <- target; ra already holds return address
+back:
+\end{lstlisting}
+
+Each call site expands to 5 instructions and requires one extra register (\texttt{t0}).
+
+\subsection{Cost Summary} \label{sec:sc1-synthesis-cost}
+
+Table~\ref{tab:synthesis-cost} summarises the instruction and register cost for every synthesis
+covered in this section. Counts reflect worst-case inputs (e.g.\ maximum shift amount, non-zero byte
+position, misaligned halfword address).
+
+\begin{table}[htb]
+\centering
+\caption{Worst-case instruction and register cost for each synthesis}
+\label{tab:synthesis-cost}
+\begin{tabular}{llcc}
+\toprule
+\textbf{Operation} & \textbf{Applies to} & \textbf{Worst-case instructions} & \textbf{Extra registers} \\
+\midrule
+\texttt{not}         & rvsc0, rvsc1 & 2    & 0 \\
+\texttt{xor} (reg)   & rvsc0, rvsc1 & 3    & 1 \\
+\texttt{xor} (imm)   & rvsc0, rvsc1 & 4    & 2 \\
+\texttt{ori} (imm)   & rvsc1        & 2    & 1 \\
+\texttt{andi} (imm)  & rvsc1        & 2    & 1 \\
+\texttt{sll}         & rvsc0, rvsc1 & 127  & 1 \\
+\texttt{srl}         & rvsc0, rvsc1 & $\sim$170 & 5 \\
+\texttt{sra}         & rvsc0, rvsc1 & $\sim$200 & 6 \\
+\texttt{slt}         & rvsc0, rvsc1 & $\sim$60  & 3 \\
+\texttt{sltu}        & rvsc0, rvsc1 & $\sim$70  & 4 \\
+\texttt{bne}         & rvsc0, rvsc1 & 3    & 1 \\
+\texttt{blt}/\texttt{bltu} & rvsc0, rvsc1 & $\sim$75 & 4 \\
+\texttt{bge}/\texttt{bgeu} & rvsc0, rvsc1 & $\sim$75 & 4 \\
+\texttt{lui} (pool)  & rvsc0        & 1    & 0 \\
+\texttt{lb}/\texttt{lbu} & rvsc0, rvsc1 & $\sim$80 & 2 \\
+\texttt{lh}/\texttt{lhu} & rvsc0, rvsc1 & $\sim$80 & 2 \\
+\texttt{sb}          & rvsc0, rvsc1 & $\sim$100 & 3 \\
+\texttt{sh}          & rvsc0, rvsc1 & $\sim$105 & 3 \\
+\texttt{jal}         & rvsc1        & 5    & 1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{GCC Implementation} \label{sec:sc1-gcc-impl}
+
+\subsection{Target Flags} \label{sec:sc1-flags}
+
+Each synthesized instruction corresponds to a Boolean flag declared in
+\texttt{gcc/config/riscv/riscv.opt}. When a flag is zero, the corresponding \texttt{define\_insn}
+condition evaluates to false (suppressing native instruction emission) while the
+\texttt{define\_expand} synthesis path fires and calls \texttt{DONE}.
+Table~\ref{tab:target-flags} lists all flags added for this project.
+
+\begin{table}[htb]
+\centering
+\caption{Target option flags added for this project}
+\label{tab:target-flags}
+\begin{tabular}{lll}
+\toprule
+\textbf{Flag} & \textbf{Macro} & \textbf{Disabled for} \\
+\midrule
+\texttt{-mfence}  & \texttt{TARGET\_FENCE}  & rvsc0, rvsc1, rvsc2 \\
+\texttt{-mauipc}  & \texttt{TARGET\_AUIPC}  & rvsc0, rvsc1 \\
+\texttt{-mlui}    & \texttt{TARGET\_LUI}    & rvsc0 \\
+\texttt{-mshift}  & \texttt{TARGET\_SHIFT}  & rvsc0, rvsc1 \\
+\texttt{-mxor}    & \texttt{TARGET\_XOR}    & rvsc0, rvsc1 \\
+\texttt{-mori}    & \texttt{TARGET\_ORI}    & rvsc0, rvsc1 \\
+\texttt{-mandi}   & \texttt{TARGET\_ANDI}   & rvsc0, rvsc1 \\
+\texttt{-mbne}    & \texttt{TARGET\_BNE}    & rvsc0, rvsc1 \\
+\texttt{-mslt}    & \texttt{TARGET\_SLT}    & rvsc0, rvsc1 \\
+\texttt{-mslti}   & \texttt{TARGET\_SLTI}   & rvsc0, rvsc1 \\
+\texttt{-mblt}    & \texttt{TARGET\_BLT}    & rvsc0, rvsc1 \\
+\texttt{-mbge}    & \texttt{TARGET\_BGE}    & rvsc0, rvsc1 \\
+\texttt{-mbltu}   & \texttt{TARGET\_BLTU}   & rvsc0, rvsc1 \\
+\texttt{-mbgeu}   & \texttt{TARGET\_BGEU}   & rvsc0, rvsc1 \\
+\texttt{-mbyte}   & \texttt{TARGET\_BYTE}   & rvsc0, rvsc1 \\
+\texttt{-mhalf}   & \texttt{TARGET\_HALF}   & rvsc0, rvsc1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+All flags have \texttt{Init(1)} (enabled by default). The per-target header (\texttt{rvscN.h})
+disables the appropriate subset via \texttt{CC1\_SPEC}.
+
+\subsection{Machine Description Patterns} \label{sec:sc1-md}
+
+The GCC machine description (\texttt{riscv.md}) uses two complementary constructs per synthesized
+operation: a \texttt{define\_insn} guarded by \texttt{TARGET\_XYZ} that emits the native instruction
+when the flag is enabled, and a \texttt{define\_expand} guarded by \texttt{!TARGET\_XYZ} that emits
+the synthesis sequence and calls \texttt{DONE}, preventing GCC from falling through to the native
+insn. The XOR synthesis illustrates the pattern:
+
+\begin{lstlisting}[language=Lisp]
+;; Native XOR (and OR) -- emitted only when TARGET_XOR (XOR) or always (IOR)
+(define_insn "*<optab><mode>3"
+  [(set (match_operand:X                0 "register_operand" "=r,r")
+        (any_or:X (match_operand:X 1 "register_operand" "%r,r")
+                       (match_operand:X 2 "arith_operand"    " r,I")))]
+  "TARGET_XOR || (<CODE>) == IOR"
+  "<insn>%i2\t%0,%1,%2")
+
+;; XOR/OR synthesis -- the any_or expand shared by both codes
+(define_expand "<optab><mode>3"
+  [(set (match_operand:X 0 "register_operand")
+        (any_or:X (match_operand:X 1 "register_operand" "")
+                   (match_operand:X 2 "reg_or_const_int_operand" "")))]
+  ""
+{
+  /* sc1 synthesis: a ^ b = (a | b) - (a & b). */
+  if ((<CODE>) == XOR && !TARGET_XOR)
+    {
+      rtx op1    = operands[1];
+      rtx op2    = REG_P (operands[2]) ? operands[2]
+                                       : force_reg (SImode, operands[2]);
+      rtx ab_and = gen_reg_rtx (SImode);
+      rtx ab_ior = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (ab_and, op1, op2));
+      emit_insn (gen_iorsi3 (ab_ior, op1, op2));
+      emit_insn (gen_subsi3 (operands[0], ab_ior, ab_and));
+      DONE;
+    }
+  /* sc1 synthesis: ori rd, rs, imm -> li t, imm; or rd, rs, t */
+  if ((<CODE>) == IOR && !TARGET_ORI && CONST_INT_P (operands[2]))
+    operands[2] = force_reg (<MODE>mode, operands[2]);
+  if (CONST_INT_P (operands[2]) && synthesize_ior_xor (<OPTAB>, operands))
+    DONE;
+})
+\end{lstlisting}
+
+The pattern is shared between \texttt{XOR} and \texttt{IOR} via the \texttt{any\_or} code iterator.
+The \texttt{DONE} call inside the \texttt{XOR} branch signals that the expansion body has fully
+handled the operation; GCC does not attempt to match the \texttt{define\_insn} afterwards.
+
+\subsection{Worked Example: XOR in C to Assembly} \label{sec:sc1-example}
+
+The following traces how \texttt{unsigned f(unsigned a, unsigned b) \{ return a \^{} b; \}} is
+compiled by \texttt{rvsc1-unknown-elf-gcc -S -O1}:
+
+\begin{enumerate}
+  \item \textbf{Frontend}: parses \texttt{a \^{} b} to an AST \texttt{XOR\_EXPR} node.
+  \item \textbf{GIMPLE}: \texttt{\_1 = a \^{} b; return \_1;} --- language-independent SSA form.
+  \item \textbf{RTL lowering}: GCC attempts to emit \texttt{xorsi3}. \texttt{TARGET\_XOR} is 0
+        (rvsc1 disables XOR), so the \texttt{XOR} branch of the synthesis body fires
+        (Section~\ref{sec:sc1-md}).
+  \item \textbf{Expansion}: the body allocates two pseudo-registers (\texttt{ab\_and},
+        \texttt{ab\_ior}), emits \texttt{andsi3} into \texttt{ab\_and}, \texttt{iorsi3} into
+        \texttt{ab\_ior}, then \texttt{subsi3} computing \texttt{ab\_ior - ab\_and} into the
+        destination, and calls \texttt{DONE}.
+  \item \textbf{Register allocation}: GCC maps pseudo-registers to physical registers (\texttt{a0},
+        \texttt{a1}, \texttt{a5}) such that no \texttt{xor} instruction appears; \texttt{ab\_ior} is
+        allocated directly into the destination register \texttt{a0}, so only one extra register
+        (\texttt{a5}, holding \texttt{ab\_and}) is visible in the output.
+  \item \textbf{Assembly output}:
+\end{enumerate}
+
+\begin{lstlisting}
+and  a5, a0, a1
+or   a0, a0, a1
+sub  a0, a0, a5
+\end{lstlisting}
+
+Inspecting the result with \texttt{grep xor} returns empty; only \texttt{and}, \texttt{or}, and
+\texttt{sub} appear --- all native sc1 instructions.
+
+\section{Known Limitations}
+
+\subsection{rvsc0: No Non-Inlined Function Calls}
+
+The rvsc0 processor supports neither \texttt{jalr} nor \texttt{jal}. The compiler therefore has no
+instruction with which to perform an indirect jump while saving the return address, making non-inlined
+function calls impossible. However, the GCC inliner operates before instruction selection, so C
+programs with multiple functions can still be compiled for rvsc0 provided that every call site is
+inlined, either by marking functions \texttt{\_\_attribute\_\_((always\_inline))} or by relying on
+GCC's automatic inlining at \texttt{-O1} and above. Any call that remains non-inlined after
+optimization will either fail at link time or produce incorrect control flow at runtime.
+
+\subsection{rvsc1: Function Body Size Limit}
+
+The only native conditional branch in rvsc1 is \texttt{beq}, which has a $\pm$4~KB PC-relative
+offset range (12-bit signed immediate). For branch targets that exceed this range, the GCC backend
+emits a long form:
+
+\begin{lstlisting}
+beq  rs1, rs2, skip        # short branch: skip the jump if condition holds
+lui  t1, %hi(target)
+addi t1, t1, %lo(target)
+jr   t1                    # absolute jump to target
+skip:
+\end{lstlisting}
+
+This long form is itself valid rvsc1 code, so correctness is preserved. However, the long form for
+the inverted branch (\texttt{bne}) chains through the \texttt{bne} synthesis (which uses
+\texttt{beq}), so individual function bodies should remain under approximately 4~KB of machine code,
+roughly 1\,000 synthesized instructions, to avoid triggering branch relaxation in unexpected cases.
+Typical educational programs are well within this limit.

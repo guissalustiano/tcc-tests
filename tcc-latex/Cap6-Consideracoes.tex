@@ -27,7 +27,7 @@ expansion enabled. Every mnemonic in the disassembly is then checked against the
 
 \subsubsection{Behavioral Self-Tests} \label{sec:strategy-behav}
 
-ISA compliance proves that the output is \textit{legal}; it says nothing about whether it is
+ISA compliance proves that the output is \textit{legal}, it says nothing about whether it is
 \textit{correct}. The behavioral strategy closes this gap by executing the compiled programs on Spike,
 the RISC-V reference simulator \cite{spike}, and checking their results. Each behavioral test is a
 self-validating C program covering one operation category through a sequence of assertions in boundary
@@ -40,8 +40,8 @@ nonzero code identifying the first failing assertion otherwise.
 Hand-written tests only cover the code paths their author anticipated. The third strategy probes the
 remaining ones with \texttt{gcc.c-torture/execute}, a suite of 1\,684 C programs accumulated by the
 GCC project over three decades of compiler development, many distilled from real miscompilation bugs.
-The programs are self-validating --- they call \texttt{exit(0)} on success and \texttt{abort()} on
-failure --- so no reference compiler is needed. The harness compiles each program at all five
+The programs are self-validating, with assertion calling \texttt{abort()} on
+failure. The harness compiles each program at all five
 optimization levels and runs it on Spike, giving $1684 \times 5 = 8420$ compiler/optimizer
 combinations. A combination passes when the simulator exits with code 0.
 
@@ -92,6 +92,7 @@ value to a host-interface exit token, and writes it to the simulator's designate
 runs the binary bare-metal at its default load address of \texttt{0x80000000} and exits with the
 reported value. The test passes if Spike exits with code 0.
 
+// TODO: fix it, I first assume the program always start on 0x but this is only true whn the host has virtual memory
 A key constraint distinguishes rvsc0 behavioral tests from rvsc1: global variables and large integer
 constants are forbidden. The rvsc0 constant pool is valid only when pool entries resolve to addresses
 below 2048 (the 12-bit signed offset range of \texttt{x0}). At Spike's load address of
@@ -322,10 +323,9 @@ benchmarks were compiled at \texttt{-O2}.
 \end{tabular}
 \end{table}
 
-Across the suite, synthesis inflates code size by a geometric mean of $4.94\times$ relative to the
+Across the suite, synthesis inflates code size by a mean of $4.94\times$ relative to the
 \texttt{gcc17} baseline. The custom \texttt{rvsc2} target produces code identical to \texttt{gcc17}
-for all 19 benchmarks (geomean ratio = 1.000), confirming that the rvsc2 configuration adds no
-overhead relative to the upstream GCC 17 build.
+for all 19 benchmarks (geomean ratio = 1.000).
 
 \section{Program Performance}
 
@@ -333,53 +333,13 @@ Since the target processor is single-cycle, every instruction retires in exactly
 (ignoring memory latency). Dynamic instruction counts are obtained by executing each compiled binary
 on Spike and totalling the retired instructions.
 
-\subsection{Individual Operation Cost} \label{sec:op-cost}
+\subsection{Whole-Program Instruction Counts} \label{sec:embench-perf}
 
-The variable left shift is the clearest illustration of synthesis cost, since its length grows with
-the operand. As derived in Section~\ref{sec:sc1-sll}, the synthesized loop costs $6b + 1$ retired
-instructions for a masked shift amount $b \geq 1$ (and 3 when $b = 0$).
-Table~\ref{tab:sll-perf} compares this model against the measured isolated instruction count; the two
-agree exactly.
+The dynamic cost of a whole program depends on how often each synthesized instruction executes 
+at run time, simple instructions such not or xori has a small absolute value, other instructions
+has a loop and the cost change depends on params. This brenchmark tries to measure a real program impact  weighted by loop trip counts rather than by static frequency. 
 
-\begin{table}[htb]
-\centering
-\caption{SLL isolated retired-instruction counts: native vs.\ synthesized (model vs.\ measured)}
-\label{tab:sll-perf}
-\begin{tabular}{rrrr}
-\toprule
-\textbf{Shift amount $b$} & \textbf{rvsc2 (native)} & \textbf{rvsc1 model ($6b+1$)} & \textbf{rvsc1 (measured)} \\
-\midrule
- 0 & 1 &   3 &   3 \\
- 1 & 1 &   7 &   7 \\
- 8 & 1 &  49 &  49 \\
-16 & 1 &  97 &  97 \\
-31 & 1 & 187 & 187 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Table~\ref{tab:op-perf} reports two representative fixed-length cases.
-
-\begin{table}[htb]
-\centering
-\caption{Isolated retired-instruction counts for fixed-length syntheses}
-\label{tab:op-perf}
-\begin{tabular}{lrrr}
-\toprule
-\textbf{Operation} & \textbf{rvsc2 (native)} & \textbf{rvsc1 (synth)} & \textbf{Overhead} \\
-\midrule
-\texttt{xor} (register) & 1 &   3 &   3$\times$ \\
-\texttt{sb} (byte store) & 1 & 113 & 113$\times$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{Whole-Program Dynamic Instruction Counts} \label{sec:embench-perf}
-
-The isolated figures above bound the cost of one operation; the dynamic cost of a whole program
-depends on how often each synthesized instruction executes at run time, weighted by loop trip counts
-rather than by static frequency. Five benchmarks exceeded a 300-second Spike budget under rvsc1 and
-are reported as TIMEOUT.
+Five benchmarks exceeded a 300-second Spike budget under rvsc1 and are reported as TIMEOUT.
 
 \begin{table}[htb]
 \centering
@@ -414,31 +374,28 @@ are reported as TIMEOUT.
 \end{table}
 
 Across the thirteen benchmarks that completed on both toolchains, synthesis inflates the dynamic
-instruction count by a geometric mean of $13.7\times$, roughly triple the $4.94\times$ static-size
+instruction count by a mean of $13.7\times$, roughly triple the $4.94\times$ static-size
 penalty, because the most expensive syntheses sit inside the hottest loops.
 
 \section{Discussion}
 
 The results establish correctness first and cost second. On the correctness axis, the ISA compliance
-tests confirm that the compiler never emits a forbidden mnemonic: every generated object was
-disassembled with \texttt{objdump -M no-aliases}, which expands pseudo-instructions to their
-underlying encodings, so a restricted instruction cannot slip past the allowlist disguised as a
-pseudo. Behavioral equivalence is established independently by differential execution on Spike: every
+tests confirm that the compiler never emits a forbidden mnemonic. Behavioral equivalence is established independently by differential execution on Spike: every
 rvsc1 program produces the same exit code as the reference RV32I binary compiled from the same
 source, and every rvsc0 single-function program writes the same \texttt{tohost} value as its
 reference.
 
 The cost of that re-expression is quantified along two dimensions. Statically, synthesis inflates
-code size by a geometric mean of $4.94\times$ over the Embench suite
-(Table~\ref{tab:embench-size}); dynamically, it inflates the retired-instruction count by a geometric
+code size by a mean of $4.94\times$ over the Embench suite
+(Table~\ref{tab:embench-size}), dynamically, it inflates the retired-instruction count by a
 mean of $13.7\times$ over the benchmarks that complete (Table~\ref{tab:embench-perf}). The dynamic
-penalty is the larger of the two because the costliest syntheses --- the shift loops, each of which
-re-materializes its own back-edge every iteration (Section~\ref{sec:sc1-sll}) --- tend to sit inside
+penalty is the larger of the two because the costliest syntheses of the shift loops, each of which
+re-materializes its own back-edge every iteration (Section~\ref{sec:sc1-sll}), tend to sit inside
 the hottest loops, so their cost is multiplied by trip count rather than merely by static occurrence.
 
 For the pedagogical setting these targets are built for, this variation is the point rather than a
-limitation. The programs students write in an introductory single-cycle course --- small loops, modest
-shift amounts, few byte-granular memory accesses --- fall at the inexpensive end of both distributions.
+limitation. The programs students write in an introductory single-cycle course, small loops, modest
+shift amounts, few byte-granular memory accesses, fall at the inexpensive end of both distributions.
 At the same time, the wide spread makes the cost of each ISA restriction concrete and measurable: a
 student can compile the same source for rvsc1 and rvsc3, compare the \texttt{-S} output, and see
 exactly how many native instructions a single missing \texttt{sll} or \texttt{sb} expands into.
@@ -488,9 +445,9 @@ baseline (geomean ratio = 1.000), confirming that the custom target configuratio
 overhead relative to a stock build.
 
 The cost of synthesis was quantified on two axes. Statically, the synthesized rvsc1 target inflates
-code size by a geometric mean of $4.94\times$ over the nineteen Embench benchmarks, with a range
+code size by a mean of $4.94\times$ over the nineteen Embench benchmarks, with a range
 from $1.41\times$ (\texttt{ud}, few shifts) to $16.39\times$ (\texttt{statemate},
-comparison-heavy control flow). Dynamically, it inflates retired instruction counts by a geometric
+comparison-heavy control flow). Dynamically, it inflates retired instruction counts by a
 mean of $13.7\times$ over the thirteen benchmarks that completed within the time budget, with five
 benchmarks timing out entirely.
 
@@ -526,7 +483,7 @@ instruction in hardware. A student who extends the Chapter 4.4 processor with, f
 shifter could recompile with \texttt{-mshift} enabled and the compiler would switch to native
 \texttt{sll}/\texttt{srl}/\texttt{sra} automatically, making the hardware improvement immediately
 observable in both binary size and execution time. Building this feedback loop into a course lab
---- extend the hardware, recompile, measure the speedup --- is a natural next step.
+is a natural next step.
 
 Finally, the target configuration and synthesis infrastructure developed here could be packaged as a
 course resource for PCS3225, including pre-built toolchain binaries, startup files, linker scripts,

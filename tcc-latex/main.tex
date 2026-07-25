@@ -405,7 +405,28 @@ The main acknowledgements are directed to \ldots
 % resumo em português
 \setlength{\absparsep}{18pt} % ajusta o espaçamento dos parágrafos do resumo
 \begin{resumo}
-% TODO: escrever o resumo em português
+Este trabalho apresenta oito alvos de compilação cruzada GCC para os processadores educacionais de
+ciclo único RISC-V descritos no livro-texto de arquitetura de computadores de Hennessy e Patterson.
+Cada alvo, denominado rvsc0 a rvsc7, modela um subconjunto progressivamente mais rico do conjunto
+de instruções RISC-V --- do núcleo de oito instruções utilizado em cursos introdutórios ao perfil
+completo rv64imafd --- e produz binários ELF \textit{bare-metal} executáveis no simulador de ISA Spike.
+
+Os dois alvos mais restritos, rvsc0 e rvsc1, exigem que o compilador sintetize cada instrução
+ausente utilizando apenas as operações suportadas nativamente pelo hardware. As operações sintetizadas
+incluem XOR bit a bit, todos os tipos de deslocamento (SLL, SRL, SRA), comparação com e sem sinal
+(SLT, SLTU), desvios condicionais (BNE, BLT, BGE, BLTU, BGEU), acessos à memória em sub-palavra
+(LB, LBU, LH, LHU, SB, SH) e chamadas de função (JAL). Cada síntese é derivada de um argumento
+formal de corretude e implementada como um padrão de expansão na descrição de máquina do GCC.
+
+A corretude é validada em duas camadas independentes: a conformidade com a ISA é verificada por
+desmontagem de cada binário compilado e checagem de cada mnemônico contra uma lista de permissão
+por alvo; a equivalência comportamental é verificada por execução diferencial no Spike em comparação
+com um compilador de referência RV32I. Adicionalmente, os alvos são validados contra um subconjunto
+da suíte de testes de tortura do GCC.
+
+O resultado é uma \textit{toolchain} funcional que permite a estudantes compilar programas C
+arbitrários e executá-los no processador que projetaram, fechando o ciclo pedagógico entre a
+implementação de hardware e a abstração de software.
 
  \textbf{Palavras-chave}: GCC. RISC-V. Compilador. Processador educacional.
 \end{resumo}
@@ -413,7 +434,28 @@ The main acknowledgements are directed to \ldots
 % resumo em inglês
 \begin{resumo}[Abstract]
  \begin{otherlanguage*}{english}
-   This is the english abstract.
+This work presents eight GCC cross-compiler targets for the educational single-cycle RISC-V
+processors described in the Hennessy-Patterson computer architecture textbook. Each target,
+designated rvsc0 through rvsc7, models a progressively richer subset of the RISC-V instruction
+set --- from the eight-instruction single-cycle core used in introductory courses to the full
+rv64imafd profile --- and produces bare-metal ELF binaries executable on the Spike RISC-V ISA
+simulator.
+
+The two most restricted targets, rvsc0 and rvsc1, require the compiler to synthesize every missing
+instruction using only the operations the hardware natively supports. Synthesized operations include
+bitwise XOR, all shift types (SLL, SRL, SRA), signed and unsigned comparison (SLT, SLTU),
+conditional branches (BNE, BLT, BGE, BLTU, BGEU), sub-word memory accesses (LB, LBU, LH, LHU,
+SB, SH), and function calls (JAL). Each synthesis is derived from a formal correctness argument and
+implemented as a GCC machine-description expand pattern.
+
+Correctness is validated on two independent layers: ISA compliance is verified by disassembling
+every compiled binary and checking every mnemonic against a per-target allowlist; behavioral
+equivalence is verified by differential execution on Spike against a reference RV32I compiler.
+Additionally, the targets are validated against a subset of the GCC compiler torture test suite.
+
+The result is a working toolchain that allows students to compile arbitrary C programs and execute
+them on the processor they designed, closing the pedagogical loop between hardware implementation
+and software abstraction.
 
    \vspace{\onelineskip}
 

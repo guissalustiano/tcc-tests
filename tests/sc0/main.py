@@ -4,7 +4,7 @@
 sc0 ISA: lw sw beq add addi sub and or
 No jalr/lui/jal — function calls are impossible.
 Test programs must be single-function noreturn programs using __builtin_unreachable.
-Large constants (lui operands) are synthesized via constant pool: lw rd, %lo(pool)(x0).
+Large constants (lui operands) are synthesized via addi/add (no lui, no memory access).
 """
 
 import argparse

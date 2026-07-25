@@ -18,7 +18,7 @@ Everything lives under `/home/salust/p/scgcc/` (the git repo root):
 | `tests/common.just` | Shared justfile recipes (configure, build, install for both binutils and gcc) |
 | `main.typ` | Typst academic document (TCC at USP/Poli) |
 
-**Source edits happen in `gcc/gcc/config/riscv/`.** Build directories are never edited directly. Files actually modified for this project: `riscv.md`, `riscv.opt`, `riscv.cc` (constant pool hooks), `rvscN.h` headers (sc1–sc7), `gcc/gcc/config/config.gcc`, `gcc/gcc/config/config.sub`.
+**Source edits happen in `gcc/gcc/config/riscv/`.** Build directories are never edited directly. Files actually modified for this project: `riscv.md`, `riscv.opt`, `riscv.cc` (constant-legitimacy/synthesis hooks), `predicates.md` (`splittable_const_int_operand`), `rvscN.h` headers (sc1–sc7), `gcc/gcc/config/config.gcc`, `gcc/gcc/config/config.sub`.
 
 ## Targets
 
@@ -206,7 +206,7 @@ The core of all instruction synthesis. Key patterns:
 - **`define_insn "*branch<mode>"`** — bne synthesis: `beq a,b,skip; lui t1,%hi(L); addi t1,t1,%lo(L); jr t1; skip:`.
 - **`define_insn "jump"`** — unconditional jump synthesis when `!TARGET_AUIPC`: `lui t1,%hi(L); addi t1,t1,%lo(L); jr t1` (needed for back-edges in synthesized loops).
 - **`one_cmplsi2` (not)** — when `!TARGET_XOR`: `sub rd, x0, rs; addi rd, rd, -1` (identity `~x = −x − 1`).
-- **LUI synthesis (rvsc0)** — `lui` is native in sc1+; for rvsc0 it is synthesized via constant pool: the 32-bit value is stored in `.rodata` at link time and loaded with `lw rd, pool_entry(x0)`. This requires the pool to live within 12-bit signed range of x0 (address < 2048), which the rvsc0 linker script guarantees. The constant pool target hook lives in `riscv.cc`.
+- **LUI synthesis (rvsc0)** — `lui` is native in sc1+; for rvsc0 it is synthesized via `riscv_synthesize_const_no_lui` in `riscv.cc` (hooked into `riscv_move_integer`): split the 20-bit immediate into two 10-bit halves, build with `addi`+shift, combine with `add` (not `or` — the two halves don't overlap, and this keeps the whole synthesis to a single accumulator register, safe pre- and post-reload), then shift left 12 and `addi` any remaining low-12-bit remainder. No memory access, so correctness doesn't depend on load address — an earlier constant-pool-based version (`lw rd, %lo(pool)(x0)`) assumed the pool always linked below address 2048, which broke under Spike's `0x80000000` load address.
 - **JAL synthesis (rvsc1)** — `jal ra, target` synthesized as: `lui ra, %hi(back); addi ra, ra, %lo(back); lui t0, %hi(target); addi t0, t0, %lo(target); jalr x0, 0(t0); back:`. Cost: 5 instructions, 1 extra register. `auipc` is absent in sc1, so the return address is materialized as an absolute label.
 - **`cstore<GPR:mode>4` expand** — when `TARGET_SLT && !TARGET_SLTI && CONST_INT_P(operands[3])`: calls `force_reg` to load the immediate into a register before `riscv_expand_int_scc`, preventing `slti`/`sltiu` emission. When `!TARGET_SLT && SImode`: synthesizes all ordered comparisons (LT, LTU, GE, GEU, GT, GTU, LE, LEU) before calling `riscv_expand_int_scc`. GT/LE/GTU/LEU are reduced to LT/LTU by swapping operands; GE/GEU/LE/LEU invert the result using `sub rd, one, result` (avoids XOR→zero_extract→ashift split that fails with `!TARGET_SHIFT`). `slt` synthesis: `sub diff, a, b; xor t1, a, b; xor t2, a, diff; and t1, t1, t2; xor diff, diff, t1; lshr rd, diff, 31`. `sltu` synthesis: `sub diff, a, b; not t1, a; and t2, t1, b; xor t3, a, b; not t3, t3; and t3, t3, diff; or t2, t2, t3; lshr rd, t2, 31`.
 - **`@cbranch<mode>4` expand** — when `!TARGET_SLT && SImode && code ≠ EQ/NE`: emits the same slt/sltu synthesis into a temp register, then calls `riscv_expand_conditional_branch` with `NE` (for LT/LTU/GT/GTU) or `EQ` (for GE/GEU/LE/LEU) so the branch tests `tmp != 0` or `tmp == 0`. This intercepts before `*branch<mode>` so its raw `"slt\t..."` asm templates are never reached with `!TARGET_SLT`.
@@ -227,6 +227,7 @@ The core of all instruction synthesis. Key patterns:
 | LH, LHU | ~70–80 | 2 | rvsc0, rvsc1 |
 | SB | ~100 (+ 1 lw + 1 sw) | 3 | rvsc0, rvsc1 |
 | SH | ~105 (+ 1 lw + 1 sw) | 3 | rvsc0, rvsc1 |
+| LUI | 25 (13 fast path) | 0 | rvsc0 |
 | JAL | 5 per call site | 1 | rvsc1 |
 
 ### 5. Target options (`gcc/gcc/config/riscv/riscv.opt`)
@@ -237,7 +238,7 @@ Custom boolean flags added for this project:
 |------|----------|----------------|
 | `-mfence` | `TARGET_FENCE` | `fence`/`fence.i` expands are no-ops |
 | `-mauipc` | `TARGET_AUIPC` | PC-relative → absolute `lui+lo12`; calls → `lui+jalr` |
-| `-mlui` | `TARGET_LUI` | large constants/symbols → constant pool `lw rd, %lo(pool)(x0)`; `jump`/`indirect_jump`/`tablejump`/calls gated off (rvsc0 only) |
+| `-mlui` | `TARGET_LUI` | large constants → addi/shift synthesis (`riscv_synthesize_const_no_lui`, no memory access); symbol/global addresses remain unsupported (still need `lui`); `jump`/`indirect_jump`/`tablejump`/calls gated off (rvsc0 only) |
 | `-mshift` | `TARGET_SHIFT` | native `sll`/`srl`/`sra` gated off; synthesis in expand |
 | `-mxor` | `TARGET_XOR` | `xor` → `(a\|b)-(a&b)`; `not`/`xori rd,rs,-1` → `sub+addi` |
 | `-mori` | `TARGET_ORI` | `ori` → `li t, imm; or` |

@@ -1,5 +1,5 @@
-/* sc0: lui synthesized via constant pool — lw rd, %lo(pool)(x0), no lui emitted.
-   Pool entries are placed at address < 2048 by the rvsc0 linker script.  */
+/* sc0: lui synthesized via addi/add — the 20-bit immediate is split into
+   two 10-bit halves and built with shifts, no lui and no memory access.  */
 
 __attribute__((noreturn)) void test_lui_const(void) {
     volatile unsigned r = 0xABCD0000u;  /* LUI_OPERAND: upper 20 bits set */
@@ -13,5 +13,11 @@ __attribute__((noreturn)) void test_lui_neg(void) {
 
 __attribute__((noreturn)) void test_lui_high(void) {
     volatile unsigned r = 0x12345000u;  /* typical address constant */
+    __builtin_unreachable();
+}
+
+__attribute__((noreturn)) void test_lui_general(void) {
+    volatile unsigned r = 0x12345678u;  /* nonzero low 12 bits: needs a
+                                            trailing addi after the split */
     __builtin_unreachable();
 }

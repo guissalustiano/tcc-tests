@@ -1,9 +1,10 @@
 /* sc0 behavioral smoke test: lb, lbu, lh, lhu, sb, sh synthesis.
    All synthesis paths use lw+shift+mask.  Stack-allocated buffers only
-   — global variables are unusable at 0x80000000 (pool would be out of
-   x0 range).  All constants are SMALL_OPERAND (-2048..2047).
-   Volatile indices prevent GCC from folding bit-offsets at compile time
-   (which would produce non-SMALL_OPERAND mask constants). */
+   — global variables are unusable since taking their address still
+   requires lui, which rvsc0 cannot synthesize.  Constants here are kept
+   SMALL_OPERAND (-2048..2047) only to keep the generated masks simple;
+   larger constants are also supported (see tests/behav/lui.c).
+   Volatile indices prevent GCC from folding bit-offsets at compile time. */
 
 int run_test(void) {
     /* ---- sb / lb / lbu ---- */

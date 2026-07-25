@@ -55,8 +55,8 @@ example:
 \end{lstlisting}
 
 \textbf{rvsc0} --- additionally lacks \texttt{lui} and \texttt{jalr}. The constant is materialized
-from a constant pool via \texttt{lw} at a link-time address below 2048, and the function stores its
-result to the stack rather than returning:
+with addi+shift (Section~\ref{sec:sc0-lui}) instead of a native \texttt{lui}, and the function stores
+its result to the stack rather than returning:
 
 \begin{lstlisting}
 example:
@@ -66,11 +66,12 @@ example:
     sub   a0, a0, a5        # /
     add   a0, a0, a0        # \  << 2 as two self-additions
     add   a0, a0, a0        # /
-    lw    a5, %lo(pool)(zero)   # load 0x12345000 from constant pool
+    addi  a5, x0, 72        # hi = 0x12345[19:10]
+    [sll  a5, a5, 10]       # a5 = hi << 10
+    addi  a5, a5, 837       # a5 = (hi << 10) + lo = 0x12345
+    [sll  a5, a5, 12]       # a5 = 0x12345000
     add   a0, a0, a5        # + constant
     sw    a0, 12(sp)        # store result (no return possible)
-pool:
-    .word 0x12345000
 \end{lstlisting}
 
 

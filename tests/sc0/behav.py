@@ -6,10 +6,11 @@ non-zero failure code.  entry.S provides _start, sets up sp/gp, calls
 run_test, converts the return value to an HTIF exit token, and writes it to
 tohost.  Spike exits 0 on pass, non-zero on fail.
 
-Note: these tests use volatile locals on the stack and SMALL_OPERAND
-constants only.  Global variables are intentionally avoided because
-rvsc0's pool-based constant synthesis is only correct at link-time for
-programs where pool entries resolve to addresses < 2048 from x0.
+Note: these tests use volatile locals on the stack rather than global
+variables.  Global variables are intentionally avoided because taking
+the address of one still requires lui, which rvsc0 does not have and
+cannot synthesize (unlike large integer constants, which are built with
+addi/add and so work at any load address, including Spike's 0x80000000).
 """
 
 import argparse

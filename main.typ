@@ -652,7 +652,7 @@ The custom targets are implemented as a backend extension to GCC 17.0.0. GCC is 
     [*File*], [*Role*],
     [`gcc/config/riscv/riscv.md`],  [Machine description: synthesis patterns and native instruction guards],
     [`gcc/config/riscv/riscv.opt`], [Option declarations: per-synthesis boolean flags],
-    [`gcc/config/riscv/riscv.cc`],  [Target hooks: constant pool handling for LUI synthesis],
+    [`gcc/config/riscv/riscv.cc`],  [Target hooks: addi/shift constant synthesis for LUI],
     [`gcc/config/riscv/rvscN.h`],   [Per-target headers: `CC1_SPEC` injecting `-mno-*` flags automatically],
     [`gcc/config/config.gcc`],      [Triple mapping: `rvscN-*-elf*` to `cpu_type=riscv`],
     [`gcc/config/config.sub`],      [Triple normalisation: recognises `rvscN` as a valid CPU name],
@@ -1002,35 +1002,21 @@ Since `addi` encodes 12-bit signed immediates (range −2048 to 2047) and all of
 
 ==== LUI (rvsc0 only) <sc0-lui>
 
-`lui rd, imm20` sets `rd = imm20 << 12`. The instruction is native in rvsc1; synthesis is required only for rvsc0. Since rvsc0 also lacks `jalr`, function calls are impossible; LUI synthesis is primarily needed to materialize large constants or absolute memory addresses.
+`lui rd, imm20` sets `rd = imm20 << 12`. The instruction is native in rvsc1; synthesis is required only for rvsc0. Since rvsc0 also lacks `jalr`, function calls are impossible; LUI synthesis is primarily needed to materialize large integer constants.
 
-*Derivation.* Since `addi` encodes only 12-bit signed immediates (range −2048 to 2047), a 20-bit immediate cannot be loaded in one instruction. Splitting $"imm20"$ into two 10-bit halves $"hi" = "imm20"[19:10]$ and $"lo" = "imm20"[9:0]$ (each in $[0, 1023]$):
-
-$ "rd" = "imm20" << 12 = (("hi" << 10) | "lo") << 12 $
-
-===== Approach 1: addi + derived sll
+*Derivation.* A 32-bit value $v$ is split into $v = ("hi20" << 12) + "lo12"$, where $"lo12"$ is the signed 12-bit remainder that makes $v - "lo12"$ an exact multiple of 4096 (the same rounding a native `lui`+`addi` pair would use) and $"hi20"$ is the 20-bit quantity a `lui` instruction would hold. If $"hi20"$ itself fits in `addi` (rare but cheap when it does), it is loaded directly; otherwise, since `addi` encodes only 12-bit signed immediates (range −2048 to 2047), $"hi20"$'s low 20 bits are split into two 10-bit halves $"hi" = "hi20"[19:10]$ and $"lo" = "hi20"[9:0]$ (each in $[0, 1023]$, so each fits `addi`). Because these two fields occupy disjoint bit ranges, $"hi20" = ("hi" << 10) + "lo"$ with no carry between them, so the combination can use `add`/`addi` instead of `or` — matching the rest of this target's arithmetic-only style and needing only one register throughout:
 
 ```asm
-addi  rd, x0, hi     # rd = upper 10 bits of imm20  (fits in addi: 0–1023)
+addi  rd, x0, hi     # rd = upper 10 bits of hi20  (fits in addi: 0–1023)
 [sll  rd, rd, 10]    # rd = hi << 10
-addi  t0, x0, lo     # t0 = lower 10 bits of imm20  (fits in addi: 0–1023)
-or    rd, rd, t0     # rd = (hi << 10) | lo  = imm20
-[sll  rd, rd, 12]    # rd = imm20 << 12
+addi  rd, rd, lo     # rd = (hi << 10) + lo = hi20  (lo fits in addi: 0–1023)
+[sll  rd, rd, 12]    # rd = hi20 << 12
+addi  rd, rd, lo12   # rd = v   (only emitted if lo12 != 0)
 ```
 
-The assembler computes `hi` and `lo` from the symbol address at link time.
+Every step reuses `rd` as both source and destination, so this synthesis needs zero extra registers and is safe to emit both before and after register allocation. Worst case (both the 10/10 split and the trailing `lo12` addition are needed) this is 25 instructions; when $"hi20"$ itself fits `addi`, it collapses to 13–14.
 
-===== Approach 2: constant pool (lw from ROM)
-
-Since the LUI immediate is always known at link time, the linker can store the full 32-bit value (`imm20 << 12`) in a constant pool at the end of ROM and replace the entire sequence with a single load.
-
-```asm
-lw    rd, pool_entry(x0)  # rd = *(pool_entry)  where pool_entry holds imm20 << 12
-```
-
-This requires that `pool_entry` fits in a 12-bit signed offset from `x0` (address < 2048), which holds for the short programs typical of the educational processor.
-
-The constant-pool approach was chosen over materializing the value with repeated `addi`+`sll` sequences (roughly 5 instructions, no memory access) because it produces a single instruction at each use site and avoids the shift instructions that rvsc0 does not support natively. The tradeoff is one memory read per use, but the constraint it imposes, every pool entry must reside within the 12-bit signed offset range of `x0`, i.e., below address 2048, is met by the rvsc0 linker script, which places `.text` at address 0 and the constant pool immediately after. Programs that fit within the first 2 KB of ROM always satisfy this constraint.
+An earlier version of this target instead stored the 32-bit value in a linker-placed constant pool and loaded it with a single `lw rd, pool_entry(x0)`, reasoning that the pool would always link within the 12-bit signed offset of `x0` (address below 2048). That reasoning was a mistake: nothing guarantees a program executes starting at address 0, and it did not hold even for this project's own Spike-based behavioral tests, whose bare-metal binaries load at `0x80000000` — `%lo(pool_entry)` there computes a wrapped, incorrect address, so the load would silently return garbage. The addi/shift synthesis above has no such dependency on load address and was adopted instead.
 
 ==== LB, LBU, LH, LHU <sc1-lb-synthesis>
 
@@ -1145,7 +1131,7 @@ Each call site expands to 5 instructions and requires one extra register (`t0`).
     [`bne`],         [rvsc0, rvsc1], [3],    [1],
     [`blt`/`bltu`],  [rvsc0, rvsc1], [~75],  [4],
     [`bge`/`bgeu`],  [rvsc0, rvsc1], [~75],  [4],
-    [`lui` (pool)],  [rvsc0],        [1],    [0],
+    [`lui` (addi+shift)], [rvsc0],   [25],   [0],
     [`lb`/`lbu`],    [rvsc0, rvsc1], [~80],  [2],
     [`lh`/`lhu`],    [rvsc0, rvsc1], [~80],  [2],
     [`sb`],          [rvsc0, rvsc1], [~100], [3],
@@ -1328,7 +1314,7 @@ The rvsc0 corpus contains 12 programs, listed by operation category in @tbl-sc0-
     [Signed byte load], [LB — synthesized via `lw`+shift+sign-extend],
     [Halfword load], [LH signed/unsigned — synthesized via `lw`+shift+mask],
     [Logic],        [AND, OR (native); XOR via `(a|b)-(a&b)`; ANDI/ORI via `li`+register-op],
-    [Large constants], [LUI — synthesized via constant pool: `lw rd, %lo(pool)(x0)`],
+    [Large constants], [LUI — synthesized via addi/add (10-bit split + shifts, no lui or memory access)],
     [Bitwise NOT],  [NOT — synthesized as `sub x0, rs; addi rd, rd, -1`],
     [Byte store],   [SB — synthesized via `lw`+clear+insert+`sw`],
     [Shifts],       [SLL, SRL, SRA with constant and variable shift counts],
@@ -1345,9 +1331,7 @@ Each program is compiled at five optimization levels, giving 12 × 5 = *60 test 
 
 Because rvsc0 has no `jalr` instruction, it cannot use the proxy-kernel runtime that rvsc1 uses. Instead, each test program is a single C function, linked against a small hand-written bare-metal startup routine that sets up the stack, invokes the test function, converts its return value to a host-interface exit token, and writes it to the simulator's designated exit address. Spike runs the binary bare-metal at its default load address of `0x80000000` and exits with the reported value. The test passes if Spike exits with code 0.
 
-// TODO: fix it, I first assume the program always start on 0x but this is only true when the host has virtual memory
-
-A key constraint distinguishes rvsc0 behavioral tests from rvsc1: global variables and large integer constants are forbidden. The rvsc0 constant pool is valid only when pool entries resolve to addresses below 2048 (the 12-bit signed offset range of `x0`). At Spike's load address of `0x80000000`, pool entries would be accessed via `lw rd, %lo(pool)(x0)` with a wrapped address, producing incorrect values. All test programs therefore use only stack-allocated `volatile` locals and constants within the SMALL_OPERAND range (−2048 to 2047).
+This is precisely the condition that surfaced the constant-pool bug described in @sc0-lui: since Spike loads bare-metal binaries at `0x80000000`, not address 0, any codegen whose correctness depends on the program's load address is exercised at exactly the address where the original assumption failed. With LUI synthesis switched to addi/shift, large integer constants are supported at any load address. Global variables remain unsupported for a separate, still-standing reason: taking the address of a global still requires `lui`, which rvsc0 has no way to synthesize (its address is link-time-unknown, and RISC-V relocations only support the standard 20-bit/12-bit `lui`/`addi` split, not this target's custom 10/10-bit split). All test programs therefore use only stack-allocated `volatile` locals.
 
 #figure(
   table(
@@ -1359,6 +1343,7 @@ A key constraint distinguishes rvsc0 behavioral tests from rvsc1: global variabl
     [Logic],       [XOR, ANDI, ORI on representative values; `(a|b)-(a&b)` identity; complement-via-XOR],
     [Loops],       [Ascending for-loop (sum 1..10), countdown while-loop (doubling to 256), do-while (repeated addition), nested loops],
     [Memory],      [SB/LBU/LB on all four byte lanes; SH/LHU/LH on both halfword lanes; signed widening via volatile intermediary],
+    [Large constants], [LUI-class 32-bit constants (clean and with nonzero low 12 bits, positive and negative) at Spike's real `0x80000000` load address — the regression test for @sc0-lui],
     [Bitwise NOT], [NOT on 0, −1, 1, −128, 127; combined `~&`, `~|`; XOR cross-checked in C against the independent formula `(a|b)&~(a&b)`],
     [Shifts],      [SLL/SRL/SRA with constant counts (1, 3, 8); variable counts; sign-propagation (SRA) and zero-fill (SRL)],
     [Comparisons], [SLT and SLTU: signed ordering, unsigned ordering, equality; unsigned wrap-around larger than small positive],
@@ -1366,7 +1351,7 @@ A key constraint distinguishes rvsc0 behavioral tests from rvsc1: global variabl
   caption: [Behavioral test programs for rvsc0, by operation category],
 ) <tbl-sc0-behav-files>
 
-All 8 behavioral tests pass at every optimization level (`-O0` through `-Os`), for 8 × 5 = 40 cases.
+All 9 behavioral tests pass at every optimization level (`-O0` through `-Os`), for 9 × 5 = 45 cases.
 
 === rvsc1
 
@@ -1582,7 +1567,7 @@ This work developed eight GCC compiler targets for the simplified RISC-V process
 
 == Contributions
 
-The primary contribution is the set of synthesis techniques embedded in the GCC machine description. For the two most restricted targets, rvsc0 and rvsc1, eighteen distinct operations require synthesis, ranging from one-instruction replacements (NOT, immediate variants) to variable-length loops (SLL, SRL, SRA), multi-instruction identities (XOR, SLT, SLTU), read-modify-write sequences (LB, LBU, LH, LHU, SB, SH), and call-site code generation (JAL, JMP). The rvsc0 target additionally requires constant pool materialization for LUI, since 32-bit constants cannot otherwise be constructed from the eight available instructions. Each synthesis was derived algebraically and embedded as a `define_expand` in `riscv.md`, so GCC selects and schedules the sequence as part of normal compilation with no programmer intervention.
+The primary contribution is the set of synthesis techniques embedded in the GCC machine description. For the two most restricted targets, rvsc0 and rvsc1, eighteen distinct operations require synthesis, ranging from one-instruction replacements (NOT, immediate variants) to variable-length loops (SLL, SRL, SRA), multi-instruction identities (XOR, SLT, SLTU), read-modify-write sequences (LB, LBU, LH, LHU, SB, SH), and call-site code generation (JAL, JMP). The rvsc0 target additionally requires addi/shift-based materialization for LUI, since 32-bit constants cannot otherwise be constructed from the eight available instructions. Each synthesis was derived algebraically and embedded as a `define_expand` in `riscv.md`, so GCC selects and schedules the sequence as part of normal compilation with no programmer intervention.
 
 A secondary contribution is the validation methodology. Two independent test layers were developed and applied: an ISA compliance suite that disassembles every generated object with `objdump -M no-aliases` and verifies that no forbidden mnemonic appears, and a behavioral equivalence suite that executes rvsc1 and rvsc0 binaries on Spike and compares their outputs against a reference RV32I build. Together these layers confirm that synthesis is both correct by construction (no forbidden instruction is ever emitted) and correct by execution (the computed results are indistinguishable from those of a full-ISA compiler).
 
@@ -1598,7 +1583,7 @@ For the pedagogical use case, these figures are not a disqualifying limitation. 
 
 Synthesis does not apply to targets rvsc2 through rvsc7, these targets expose the full upstream RISC-V backend and require no new synthesis logic. Their correctness depends entirely on the upstream GCC test suite.
 
-The rvsc0 target, unlike rvsc1, cannot execute programs that call and return from functions, because `jalr` is absent. The constant pool mechanism enables 32-bit constant loading and unconditional jumps, but programs must be written as non-returning single functions. This restriction matches the processor it targets, but it means the behavioral test harness that uses HTIF (which requires `jalr` for the call to `main`) cannot be used for rvsc0,rvsc0 programs write their result directly to `tohost` via `sw`.
+The rvsc0 target, unlike rvsc1, cannot execute programs that call and return from functions, because `jalr` is absent. The addi/shift synthesis enables 32-bit constant loading, and unconditional jumps use a PC-relative `beq zero,zero` (neither depends on a constant pool), but programs must still be written as non-returning single functions. This restriction matches the processor it targets, but it means the behavioral test harness that uses HTIF (which requires `jalr` for the call to `main`) cannot be used for rvsc0,rvsc0 programs write their result directly to `tohost` via `sw`.
 
 The synthesized shift loops are functionally correct but dynamically expensive to the point of impracticality for programs that shift inside hot loops. The synthesis is inherently sequential: the GCC machine description expands a shift at compile time into a counted loop, which at run time executes one iteration per bit position. There is no partial-hardware or table-driven alternative within the instruction set these targets support.
 
@@ -1659,7 +1644,7 @@ example:
     jalr  zero, 0(ra)       # return
 ```
 
-*rvsc0* — additionally lacks `lui` and `jalr`. The constant is materialized from a constant pool via `lw` at a link-time address below 2048, and the function stores its result to the stack rather than returning:
+*rvsc0* — additionally lacks `lui` and `jalr`. The constant is materialized with addi+shift (@sc0-lui) instead of a native `lui`, and the function stores its result to the stack rather than returning:
 
 ```asm
 example:
@@ -1669,11 +1654,12 @@ example:
     sub   a0, a0, a5        # /
     add   a0, a0, a0        # \  << 2 as two self-additions
     add   a0, a0, a0        # /
-    lw    a5, %lo(pool)(zero)   # load 0x12345000 from constant pool
+    addi  a5, x0, 72        # hi = 0x12345[19:10]
+    [sll  a5, a5, 10]       # a5 = hi << 10
+    addi  a5, a5, 837       # a5 = (hi << 10) + lo = 0x12345
+    [sll  a5, a5, 12]       # a5 = 0x12345000
     add   a0, a0, a5        # + constant
     sw    a0, 12(sp)        # store result (no return possible)
-pool:
-    .word 0x12345000
 ```
 
 == SLL Synthesis Assembly <apx-sll-asm>

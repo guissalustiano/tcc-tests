@@ -1428,37 +1428,20 @@ The full suite covers 1 684 × 5 = 8 420 compiler+optimizer combinations. @tbl-t
   table(
     columns: (auto, auto, auto, auto),
     align: (left, right, right, right),
-    [*Optimization*], [*Passed*], [*Skipped*], [*Timed out*],
-    [`-O0`], [~1 501], [~183], [0],
-    [`-O1`], [~1 531], [~153], [0],
-    [`-O2`], [1 505],  [164],  [15],
-    [`-O3`], [~1 503], [~161], [~14],
-    [`-Os`], [~1 525], [~157], [~2],
-    [*Total*], [*7 546*], [*843*], [*31*],
+    [*Optimization*], [*Passed*], [*Skipped*], [*Failed*],
+    [`-O0`], [1 627], [57], [0],
+    [`-O1`], [1 617], [56], [11],
+    [`-O2`], [1 617], [56], [11],
+    [`-O3`], [1 620], [55], [9],
+    [`-Os`], [1 621], [58], [5],
+    [*Total*], [*8 102*], [*282*], [*36*],
   ),
   caption: [gcc.c-torture/execute results for rvsc1 (8 420 combinations)],
 ) <tbl-torture-results>
 
-"Skipped" denotes programs that fail to compile or link. The two dominant causes are unrelated to sc1's restricted instruction set: roughly 100 tests use old K&R-style implicit `int` declarations that GCC 17 (defaulting to C23) rejects as hard errors, and roughly 35 tests use `printf`/`sprintf`/`fprintf`, whose newlib implementation references an internal reentrant symbol (`_vfprintf_r`) absent from the linked sysroot. A further three use `__int128`, which 32-bit RISC-V does not support regardless of instruction set. 
+"Skipped" denotes programs that fail to compile or link, or that are excluded up front as known-unsupported (nine sources across all five optimization levels: five upstream-flagged "expensive" tests whose compile time alone exceeds budget, one using `_Decimal` floating point, one using x87-specific inline asm, and three using `__int128`, which 32-bit RISC-V does not support regardless of instruction set). Of the remainder, the two dominant causes are unrelated to sc1's restricted instruction set: old K&R-style implicit `int` declarations that GCC 17 (defaulting to C23) rejects as hard errors, and `printf`/`sprintf`/`fprintf` calls, whose newlib implementation references an internal reentrant symbol (`_vfprintf_r`) absent from the linked sysroot.
 
-// TODO: increase the timeout
-The 31 timed-out cases are programs that compile and execute correctly but generate so many synthesized instructions that Spike exceeds the 300-second simulation budget. Because rvsc1 replaces each shift instruction with a loop of 100 to 200 instructions, programs that perform many shifts at higher optimization levels can require orders of magnitude more retired instructions than the equivalent native-ISA binary. Two combinations are excluded up front because they always exceed the budget (`nestfunc-5.c` at `-O2` and `-O3`, which involves trampolines synthesized from shift-heavy code), these are counted in the "Skipped" column. @tbl-torture-timeouts lists the programs that consistently time out at `-O2` or `-O3`.
-
-#figure(
-  table(
-    columns: (auto, auto),
-    align: left,
-    [*Test program*], [*Optimization levels*],
-    [`920302-1.c`],   [`-O2`, `-O3`],
-    [`pr53645-2.c`],  [`-O2`, `-O3`],
-    [`pr91450-1.c`],  [`-O2`, `-O3`],
-    [`pr91450-2.c`],  [`-O2`, `-O3`],
-    [`pr93249.c`],    [`-O3`],
-    [`pr93908.c`],    [`-O2`, `-O3`],
-    [`string-opt-5.c`], [`-O2`, `-O3`],
-  ),
-  caption: [gcc.c-torture programs that consistently time out (>300 s on Spike) due to synthesis overhead],
-) <tbl-torture-timeouts>
+An earlier revision of this suite reported 31 cases that appeared to time out at the 300-second Spike budget, attributed to shift-synthesis overhead. Root-causing them instead found a genuine backend correctness bug: for `!TARGET_AUIPC`, both the long-branch/jump synthesis and the call-address materialization used the same scratch register (`t1`) without declaring it clobbered, so an optimizer could leave a call executing with a stale register value pointing at a nearby loop instead of the intended callee — and, more subtly, the same missing declaration let IRA allocate an *unrelated* live value (e.g. a loaded word inside the byte/half-word store synthesis) to a register that a nearby shift-synthesis loop's back edge silently destroyed. Both were genuine miscompilations, not slow-but-correct code, and were confirmed via direct instruction-level tracing (`spike --log-commits`) on `920302-1.c` and `pr93249.c`, where a call or a merge step ended up executing with corrupted register/memory state. Fixing the register-clobber declarations resolved all 31 original cases with zero regressions (95/95 ISA compliance, 30/30 behavioral). The 36 failures remaining in @tbl-torture-results (34 correctness failures plus 2 timeouts, none overlapping the original 31) are a separate, not-yet-investigated issue.
 
 === rvsc2 <sc2-isa-tests>
 

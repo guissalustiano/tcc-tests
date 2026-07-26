@@ -37,10 +37,7 @@ SPIKE_TIMEOUT   = 300
 
 # Tests that produce correct code but generate so many synthesis instructions
 # that Spike exceeds SPIKE_TIMEOUT even on an unloaded machine.
-KNOWN_SLOW: set[tuple[str, str]] = {
-    ("nestfunc-5.c", "-O2"),
-    ("nestfunc-5.c", "-O3"),
-}
+KNOWN_SLOW: set[tuple[str, str]] = set()
 
 # Tests that are out of scope regardless of opt level: upstream-flagged
 # "expensive" tests that blow COMPILE_TIMEOUT on their own, tests using GCC

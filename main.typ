@@ -844,7 +844,7 @@ Neither sc0 nor sc1 include any shift instruction. All three variants are synthe
 - _Base case_ $(n = 0)$: $"sll"(x, 0) = x = x dot 2^0$. $checkmark$
 - _Inductive step_: Assume $"sll"(x, n) = x dot 2^n$. Then $"sll"(x, n+1) = "sll"(x, n) + "sll"(x, n) = 2 dot x dot 2^n = x dot 2^(n+1)$. $checkmark$
 
-The synthesis implements this recursion as a count-down loop in which each iteration doubles `rd` via `add rd, rd, rd`. $square$
+The synthesis implements this recursion as $b$ repeated doublings, where $b$ is the masked shift amount. GCC lowers this two different ways depending on whether $b$ is known at compile time. $square$
 
 ```c
 uint32_t sll(uint32_t rs1, uint32_t rs2) {
@@ -855,9 +855,9 @@ uint32_t sll(uint32_t rs1, uint32_t rs2) {
 }
 ```
 
-The resulting assembly sequence is listed in @apx-sll-asm.
+*Constant shift count.* When $b$ is a compile-time constant (e.g. `x << 3`), GCC unrolls the recursion directly during expand: $b$ consecutive `add rd, rd, rd` instructions, with no loop, no counter, and no back-edge at all. Cost is exactly $b$ instructions ($b >= 1$; the identity move for $b = 0$ is elided). The resulting assembly is listed in @apx-sll-const-asm.
 
-Let $b$ denote the masked shift amount. Each loop iteration performs the doubling (`add`), decrements the counter (`addi`), and tests it (`beq`); because sc1 has no native unconditional jump (`jal` and `auipc` are both absent), the back-edge to the top of the loop is itself synthesized as `lui` + `addi` + `jr` (three instructions). Every iteration therefore costs 6 instructions, except the final one, which exits through the taken `beq` and skips the back-jump. With the mask and guard setup this gives $6b + 1$ instructions for $b >= 1$, a minimum of 3 when $b = 0$ (mask and guard only, no loop) and a maximum of 187 when $b = 31$, at the cost of one extra register. This is the dominant reason shift-heavy code expands so sharply on sc1: the synthesized loop pays not only for the repeated addition but also for re-materializing its own back-edge on every pass.
+*Variable shift count.* When $b$ is only known at runtime (e.g. `x << n`), the shift count must be counted down in a register, and the doubling is emitted as a genuine loop: each iteration performs the doubling (`add`), decrements the counter (`addi`), and tests it (`beq`); because sc1 has no native unconditional jump (`jal` and `auipc` are both absent), the back-edge to the top of the loop is itself synthesized as `lui` + `addi` + `jr` (three instructions). Every iteration therefore costs 6 instructions, except the final one, which exits through the taken `beq` and skips the back-jump. With the mask and guard setup this gives $6b + 1$ instructions for $b >= 1$, a minimum of 3 when $b = 0$ (mask and guard only, no loop) and a maximum of 187 when $b = 31$, at the cost of one extra register. The resulting assembly is listed in @apx-sll-asm. This is the dominant reason variable-count shift-heavy code expands so sharply on sc1: the synthesized loop pays not only for the repeated addition but also for re-materializing its own back-edge on every pass.
 
 
 ===== Logical Right Shift (SRL) <sc1-srl>
@@ -881,9 +881,9 @@ uint32_t srl(uint32_t x, uint32_t shift) {
 }
 ```
 
-The resulting assembly sequence is listed in @apx-srl-asm.
+*Constant shift count.* When $s$ is a compile-time constant, GCC unrolls both the `in_mask` pre-shift and the $(32-s)$-iteration extraction body directly at split time: every `<<=` above becomes a straight-line chain of `add` doublings, and every loop back-edge disappears entirely. Only the data-dependent bit test (`x & in_mask`, then conditionally `or`) survives as a forward, non-looping branch — the loop *control* is eliminated, not the per-bit test itself, since whether a given input bit is set cannot be known until runtime. Measured worst case (masked shift amount $s=1$, giving 31 surviving extraction steps) is 159 instructions, using 3 extra registers (`out_mask`, `in_mask`, a comparison temporary). The resulting assembly is listed in @apx-srl-const-asm.
 
-The main loop runs $(32 - s)$ iterations where $s$ is the masked shift amount; each iteration costs 4–5 instructions. Initialization and the `in_mask` pre-shift add overhead proportional to $s$, bringing the worst-case total to approximately 170 instructions and requiring five extra registers.
+*Variable shift count.* When $s$ is only known at runtime, both the `in_mask` pre-shift and the extraction loop must be counted down at runtime. The main loop runs $(32 - s)$ iterations at 4–5 instructions each; initialization and the `in_mask` pre-shift add overhead proportional to $s$, bringing the worst-case total to approximately 170 instructions and requiring five extra registers (four scratch registers plus the shift-count register). The resulting assembly is listed in @apx-srl-asm.
 
 ===== Arithmetic Right Shift (SRA) <sc1-sra>
 
@@ -906,9 +906,9 @@ uint32_t sra(uint32_t x, uint32_t shift) {
 }
 ```
 
-The resulting assembly sequence is listed in @apx-sra-asm.
+*Constant shift count.* When $s$ is a compile-time constant, the reused SRL expansion is unrolled exactly as described in @sc1-srl, and `sign_mask` is built the same way: a straight-line chain of $(32-s)$ `add` doublings seeded from $-1$, rather than the runtime `sub`/`add`/loop used to compute it in the variable case. Seeding from $-1$ (loadable via a single `addi`) rather than a general `li` keeps this step independent of `lui`, which matters because this synthesis is shared with rvsc0. Measured worst case (masked shift amount $s=1$) is 195 instructions, using 5 extra registers. The resulting assembly is listed in @apx-sra-const-asm.
 
-The synthesis reuses the full SRL expansion and appends roughly 25 additional instructions for sign-bit extraction and sign-mask construction, reaching a worst-case total of approximately 200 instructions at the cost of six extra registers.
+*Variable shift count.* When $s$ is only known at runtime, the synthesis reuses the full variable-count SRL expansion and appends a runtime loop that builds `sign_mask` by doubling $-1$ a runtime-computed $(32-s)$ times — roughly 25 additional instructions for sign-bit extraction and sign-mask construction, reaching a worst-case total of approximately 200 instructions at the cost of six extra registers. The resulting assembly is listed in @apx-sra-asm.
 
 === Comparisons <sc1-comparisons>
 
@@ -1123,9 +1123,12 @@ Each call site expands to 5 instructions and requires one extra register (`t0`).
     [`xor` (imm)],   [rvsc0, rvsc1], [4],    [2],
     [`ori` (imm)],   [rvsc1],        [2],    [1],
     [`andi` (imm)],  [rvsc1],        [2],    [1],
-    [`sll`],         [rvsc0, rvsc1], [127],  [1],
-    [`srl`],         [rvsc0, rvsc1], [~170], [5],
-    [`sra`],         [rvsc0, rvsc1], [~200], [6],
+    [`sll` (const)], [rvsc0, rvsc1], [$b$ (max 31)], [0],
+    [`sll` (var)],   [rvsc0, rvsc1], [187],  [1],
+    [`srl` (const)], [rvsc0, rvsc1], [159],  [3],
+    [`srl` (var)],   [rvsc0, rvsc1], [~170], [5],
+    [`sra` (const)], [rvsc0, rvsc1], [195],  [5],
+    [`sra` (var)],   [rvsc0, rvsc1], [~200], [6],
     [`slt`],         [rvsc0, rvsc1], [~60],  [3],
     [`sltu`],        [rvsc0, rvsc1], [~70],  [4],
     [`bne`],         [rvsc0, rvsc1], [3],    [1],
@@ -1662,7 +1665,21 @@ example:
     sw    a0, 12(sp)        # store result (no return possible)
 ```
 
-== SLL Synthesis Assembly <apx-sll-asm>
+== SLL Synthesis Assembly (Constant Count) <apx-sll-const-asm>
+
+Real compiler output (`rvsc1-unknown-elf-gcc -S -O1`) for `shift3` from `tests/sc1/tests/isa/shift.c` (`x << 3`, so $b=3$):
+
+```asm
+shift3:
+    add   a0, a0, a0
+    add   a0, a0, a0
+    add   a0, a0, a0
+    ret
+```
+
+No loop, no counter, no back-edge — just $b$ doublings.
+
+== SLL Synthesis Assembly (Variable Count) <apx-sll-asm>
 
 ```asm
 # rd = rs1 << rs2
@@ -1677,7 +1694,42 @@ loop:
 done:
 ```
 
-== SRL Synthesis Assembly <apx-srl-asm>
+== SRL Synthesis Assembly (Constant Count) <apx-srl-const-asm>
+
+Real compiler output for `shr3` from `tests/sc1/tests/isa/srl.c` (`x >> 3`, so $s=3$, giving $32-3=29$ unrolled extraction steps). The full 182-line listing is reproducible via `rvsc1-unknown-elf-gcc -S -O1 tests/sc1/tests/isa/srl.c`; the excerpt below shows the setup, the first two extraction steps, and the last, with the identical repeated block elided:
+
+```asm
+shr3:
+    mv    a2, a0         # a2 = x (saved before a0 is zeroed)
+    li    a0, 0          # result = 0
+    li    a5, 1          # out_mask = 1
+    li    a4, 1
+    add   a4, a4, a4      # in_mask = 1 << 3, unrolled: 3 doublings
+    add   a4, a4, a4
+    add   a4, a4, a4
+    and   a3, a2, a4      # bit 3
+    beq   a3, zero, .L2
+    or    a0, a0, a5
+.L2:
+    add   a5, a5, a5
+    add   a4, a4, a4      # bit 4
+    and   a3, a2, a4
+    beq   a3, zero, .L3
+    or    a0, a0, a5
+.L3:
+    # ... pattern repeats once per surviving bit, 4 through 30,
+    #     with no loop back-edge between blocks ...
+.L29:
+    add   a5, a5, a5
+    add   a4, a4, a4      # bit 31 (last surviving bit)
+    and   a3, a2, a4
+    beq   a3, zero, .L30
+    or    a0, a0, a5
+.L30:
+    ret
+```
+
+== SRL Synthesis Assembly (Variable Count) <apx-srl-asm>
 
 ```asm
 # rd = rs1 >> rs2 (logical shift right)
@@ -1699,7 +1751,40 @@ skip:
 done:
 ```
 
-== SRA Synthesis Assembly <apx-sra-asm>
+== SRA Synthesis Assembly (Constant Count) <apx-sra-const-asm>
+
+Real compiler output for `sra3` from `tests/sc1/tests/isa/sra.c` (`x >> 3`, so $s=3$). The full 217-line listing is reproducible via `rvsc1-unknown-elf-gcc -S -O1 tests/sc1/tests/isa/sra.c`; the excerpt below shows the sign-bit setup, the first extraction step (identical in structure to @apx-srl-const-asm), the elided repeated block, and the unrolled `sign_mask` construction:
+
+```asm
+sra3:
+    mv    a6, a0
+    li    a2, -2147483648   # a2 = 0x80000000
+    and   a2, a0, a2        # a2 = sign bit of x
+    li    a0, 0             # result = 0
+    li    a5, 1              # out_mask = 1
+    li    a4, 1
+    add   a4, a4, a4         # in_mask = 1 << 3, unrolled
+    add   a4, a4, a4
+    add   a4, a4, a4
+    and   a3, a6, a4
+    beq   a3, zero, .L2
+    or    a0, a0, a5
+.L2:
+    # ... SRL-part pattern repeats once per surviving bit, exactly as
+    #     in @apx-srl-const-asm, through .L30 ...
+.L30:
+    beq   a2, zero, .L31    # sign bit clear -> no sign-fill needed
+    li    a1, -1
+    add   a1, a1, a1         # sign_mask = -1 << (32-3), unrolled:
+    add   a1, a1, a1         # 29 doublings from -1, seeded via addi
+    add   a1, a1, a1         # (no lui needed; keeps this synthesis
+    # ... 26 more doublings ...                 # rvsc0-compatible)
+    or    a0, a0, a1
+.L31:
+    ret
+```
+
+== SRA Synthesis Assembly (Variable Count) <apx-sra-asm>
 
 ```asm
 # rd = rs1 >>_s rs2 (arithmetic shift right)

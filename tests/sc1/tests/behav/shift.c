@@ -10,5 +10,13 @@ int main(void) {
     if ((1 << n) != 32)                        return 6;
     if (((unsigned)(-1) >> n) != 0x07FFFFFFu)  return 7;  /* logical */
     if ((-32 >> n) != -1)                      return 8;  /* arithmetic */
+    /* edge shift amounts: 0, 1, 31 */
+    if ((0xFFFFFFFFu >> 0)  != 0xFFFFFFFFu)    return 9;
+    if ((0xFFFFFFFFu >> 1)  != 0x7FFFFFFFu)    return 10;
+    if ((0xFFFFFFFFu >> 31) != 1u)             return 11;
+    if ((-1 >> 0)  != -1)                      return 12;
+    if ((-1 >> 1)  != -1)                      return 13;
+    if ((-1 >> 31) != -1)                      return 14;
+    if ((1 >> 0)   != 1)                       return 15;
     return 0;
 }

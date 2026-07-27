@@ -144,12 +144,48 @@ Suggested order (contradictions first, then arithmetic, then polish):
     published cells (geomean from the table itself = 15.54x). typst compile
     clean.
 
- 6. improvements/06-cost-table-and-sh-mask-corrections.md
-    §6: the sh mask is described as `lui 0x10; addi -1` but the cost table lists
-    sh for rvsc0, which has no lui; @tab-synthesis-cost has no row for the
-    synthesized jump though §Contributions lists JMP; "eighteen distinct
-    operations" no longer matches the 20-row table; the table now mixes static
-    and dynamic counts in one column.
+ 6. [done] improvements/06-cost-table-and-sh-mask-corrections.md
+    All four parts done, but the cost-table half of part 1 turned into item 9.
+
+    Part 1 (sh mask): main.typ:1072 now splits by target instead of asserting
+    lui. Verified in riscv.md rather than assumed -- the movhi store path and
+    the lhu load path both call riscv_emit_const_no_lui for 0xFFFF when
+    !TARGET_LUI and emit_move_insn(GEN_INT(0xFFFF)) otherwise, and the store
+    materializes the constant twice (t_mask to clear the field, t_val to
+    truncate the value), which the prose now says.
+
+    Part 2 (jump row): added, split by target, costs read off the `jump`
+    define_insn -- rvsc0 `beq zero,zero,L` = 1 insn / 0 regs, rvsc1
+    `lui t0 / addi t0 / jr t0` = 3 / 1. Note it is t0, not the t1 that
+    CLAUDE.md's summary still names; the pattern comment explains the switch
+    (t1 is RISCV_CALL_ADDRESS_TEMP and collided with call materialization).
+
+    Part 3 (stale count): "eighteen distinct operations" replaced by a
+    reference to @tab-synthesis-cost, per the task's preferred option, so it
+    cannot drift again. For the record the table is 22 rows before the jump
+    additions, not the 20 the task file assumed.
+
+    Part 4 (mixed units): footnote added stating the counts are dynamic and
+    that only the variable-count rows differ from their static footprint. The
+    task file's "srl_var is 26 static" is wrong -- measured 35 by counting the
+    emitted body -- so the footnote says 35.
+
+    NOT done, split out as item 9: re-verifying the cost figures. The task
+    asked whether ~105/3 still holds for rvsc0; it does not hold for rvsc1
+    either. Measured worst cases at HEAD are sb 295, sh ~200, lb/lbu 321,
+    lh/lhu 340/337 against a table claiming ~100/~105/~80/~80. Correcting only
+    those six rows would have made the table self-contradictory (sb is two
+    variable SLL loops, so sb=295 next to sll_var=187 cannot both be right),
+    so the rows need to move together. See item 9.
+
+    Two side results from rebuilding sc0 to HEAD for this. First, rvsc0's sh is
+    *cheaper* than rvsc1's (176 vs 216 counted), the reverse of what the task
+    predicted: rvsc0 pays +22 building 0xFFFF twice without lui, but saves 2
+    instructions on each of ~31 loop iterations because its back edge is one
+    `beq zero,zero` rather than lui+addi+jr. Second, the sh source ICEd on the
+    sc0 compiler as installed (built 07-24) and does not ICE at HEAD at any of
+    -O0/-O1/-O2/-Os, so one of the 07-26 fixes cured it; nothing to report
+    beyond the reminder that a stale install can manufacture phantom bugs.
 
  7. improvements/07-results-chapter-small-corrections.md
     Copy-level: `sub x0, rs` missing its destination (twice), the same
@@ -173,3 +209,19 @@ Suggested order (contradictions first, then arithmetic, then polish):
     reg/reg lshiftrt, so the native shift define_insn stays gated off even when
     TARGET_SHIFT is restored -- harmless for the shipped target, but it breaks
     the define_insn/define_expand sync invariant in CLAUDE.md.
+
+ 9. improvements/09-cost-table-dynamic-counts-stale.md   [NEW -- found by item 6]
+    Every row of @tab-synthesis-cost whose expansion contains a loop is
+    understated 2-4x. Measured at HEAD by differencing one-call against
+    two-call programs on Spike: sb 295 (table ~100), sh ~200 (~105), lb/lbu
+    321 (~80), lh/lhu 340/337 (~80); a hand-count of test_sh (216) corroborates
+    the dynamic figure. Probable cause is the !TARGET_AUIPC back edge, 3
+    instructions (lui/addi/jr) where a plain j is 1, paid every iteration of
+    every synthesis loop. The offset scan also shows stores and loads have
+    opposite worst cases -- a load is worst when *aligned*, because the SRL
+    extraction loop gets cheaper as the shift grows (shr1=159 vs shr31=39) --
+    so the table cannot be spot-checked at a single offset. Remaining looping
+    rows (sll/srl/sra var, slt, sltu, blt, bge, rvsc0 lui) unmeasured and
+    presumed equally stale; the straight-line rows are fine. rvsc0 needs
+    analytic counting instead of differencing, since with no jalr there is no
+    call to difference.

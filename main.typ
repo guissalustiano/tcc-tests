@@ -1072,7 +1072,7 @@ void sb(uint8_t *addr, uint32_t rs2) {
 
 The resulting assembly sequence is listed in @apx-sb-asm. The expansion requires one extra `lw` and one extra `sw` surrounding the computation, totalling approximately 100 instructions and three extra registers (t0–t2).
 
-The `sh` synthesis follows the same read-modify-write pattern as `sb`, with `MASK = 2` and mask constant `0xFFFF`. Since `0xFFFF` exceeds the 12-bit `addi` range, it is materialized via `lui 0x10; addi -1`.
+The `sh` synthesis follows the same read-modify-write pattern as `sb`, with `MASK = 2` and mask constant `0xFFFF`. That constant exceeds the 12-bit `addi` range, so it must itself be materialized, and how depends on the target. rvsc1 has `lui` and builds it as `lui 0x10; addi -1`. rvsc0 does not, and routes the constant through the `addi`/shift construction of @sc0-lui instead --- the same path every non-small constant takes on that target. The sequence needs the constant twice, once for the mask that clears the halfword field of the loaded word and once for the mask that truncates the value being stored, so whichever construction applies is paid twice per `sh`. The same applies to the `0xFFFF` used by the `lh`/`lhu` synthesis, which materializes it once.
 
 ```c
 void sh(uint16_t *addr, uint32_t rs2) {
@@ -1142,11 +1142,15 @@ Each call site expands to 5 instructions and requires one extra register (`t0`).
     [`lh`/`lhu`],    [rvsc0, rvsc1], [~80],  [2],
     [`sb`],          [rvsc0, rvsc1], [~100], [3],
     [`sh`],          [rvsc0, rvsc1], [~105], [3],
+    [`jump`],        [rvsc0],        [1],    [0],
+    [`jump`],        [rvsc1],        [3],    [1],
     [`jal`],         [rvsc1],        [5],    [1],
     table.hline(),
   ),
   caption: [Worst-case instruction and register cost for each synthesis],
 ) <tab-synthesis-cost>
+
+Counts in @tab-synthesis-cost are dynamic: instructions retired for the worst-case operand, which is the quantity @sec-embench-perf draws on. For every row except the variable-count shifts the two coincide, because the expansion is straight-line. The variable-count rows are the exception and the gap is large: `srl` (var) retires roughly 170 instructions for a shift of 31, but occupies only 35 in `.text`, since the count is a loop trip count rather than a code size. @tbl-embench-size, which measures `.text`, therefore weights those rows far less heavily than @tbl-embench-perf does.
 
 
 == GCC Implementation <sc1-gcc-impl>
@@ -1585,7 +1589,7 @@ This work developed eight GCC compiler targets for the simplified RISC-V process
 
 == Contributions
 
-The primary contribution is the set of synthesis techniques embedded in the GCC machine description. For the two most restricted targets, rvsc0 and rvsc1, eighteen distinct operations require synthesis, ranging from one-instruction replacements (NOT, immediate variants) to variable-length loops (SLL, SRL, SRA), multi-instruction identities (XOR, SLT, SLTU), read-modify-write sequences (LB, LBU, LH, LHU, SB, SH), and call-site code generation (JAL, JMP). The rvsc0 target additionally requires addi/shift-based materialization for LUI, since 32-bit constants cannot otherwise be constructed from the eight available instructions. Each synthesis was derived algebraically and embedded as a `define_expand` in `riscv.md`, so GCC selects and schedules the sequence as part of normal compilation with no programmer intervention.
+The primary contribution is the set of synthesis techniques embedded in the GCC machine description. For the two most restricted targets, rvsc0 and rvsc1, the operations requiring synthesis are those enumerated in @tab-synthesis-cost, ranging from one-instruction replacements (NOT, immediate variants) to variable-length loops (SLL, SRL, SRA), multi-instruction identities (XOR, SLT, SLTU), read-modify-write sequences (LB, LBU, LH, LHU, SB, SH), and call-site code generation (JAL, JMP). The rvsc0 target additionally requires addi/shift-based materialization for LUI, since 32-bit constants cannot otherwise be constructed from the eight available instructions. Each synthesis was derived algebraically and embedded as a `define_expand` in `riscv.md`, so GCC selects and schedules the sequence as part of normal compilation with no programmer intervention.
 
 A secondary contribution is the validation methodology. Two independent test layers were developed and applied: an ISA compliance suite that disassembles every generated object with `objdump -M no-aliases` and verifies that no forbidden mnemonic appears, and a behavioral equivalence suite of self-validating programs that execute rvsc1 and rvsc0 binaries on Spike and check each computed result against the value the C semantics require, reporting any mismatch through the exit code (rvsc1) or the `tohost` token (rvsc0). Together these layers confirm that synthesis is both correct by construction (no forbidden instruction is ever emitted) and correct by execution (the computed results match the values the C semantics require).
 

@@ -46,12 +46,28 @@ Suggested order (contradictions first, then arithmetic, then polish):
     item 07 part 4 (naming the three sources and showing the mechanism rather
     than asserting it) is still open. typst compile clean.
 
- 3. improvements/03-remove-false-differential-claims.md
-    main.typ:1548, 1562, 1566 claim behavioral results are compared against a
-    reference RV32I build. No such comparison exists — both behav.py harnesses
-    only check for exit 0, and main.typ:1291 says so correctly. The thesis
-    contradicts itself. Task covers both resolutions (drop the claim, or build
-    the layer and invert the edits).
+ 3. [done] improvements/03-remove-false-differential-claims.md
+    Took the "stop claiming it" resolution: no reference RV32I build exists, so
+    the differential wording was replaced by the mechanism actually implemented
+    — self-validating programs that check each result against a value derived
+    independently in the same program (a hand-computed constant or an algebraic
+    identity over other operations), reporting the first failure via the exit
+    code (rvsc1, under pk) or the `tohost` token (rvsc0, bare-metal HTIF).
+    The task file named three passages; there were six. Beyond §7 Discussion
+    (1567), §8 Contributions (1581) and §8 Results Summary (1585, "differential"
+    dropped), the claim also appeared in *both* abstracts — the Portuguese
+    resumo at 188 ("execução diferencial ... compilador de referência RV32I")
+    and the English one at 217 — and in §4 Validation at 432, which stated the
+    two-compiler comparison as the method rather than as a design option, so the
+    task's Verify step required aligning it. Contributions also lost "the
+    computed results are indistinguishable from those of a full-ISA compiler"
+    in favor of "match the values the C semantics require", per the task's note
+    that the original is defensible only because the expected values are hand-
+    computed. §4's self-validating description at 1291 was already correct and
+    is untouched; the correctness claim itself is not weakened, only its
+    provenance corrected. grep for differential/diferencial/reference RV32I/
+    compilador de referência over main.typ now returns nothing; typst compile
+    clean.
 
  4. improvements/04-reframe-slt-synth-ice-paragraph.md
     main.typ:1446 calls the two *branch<mode>_slt_synth ICEs "pre-existing,

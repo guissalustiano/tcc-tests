@@ -185,9 +185,10 @@ formal de corretude e implementada como um padrão de expansão na descrição d
 
 A corretude é validada em duas camadas independentes: a conformidade com a ISA é verificada por
 desmontagem de cada binário compilado e checagem de cada mnemônico contra uma lista de permissão
-por alvo; a equivalência comportamental é verificada por execução diferencial no Spike em comparação
-com um compilador de referência RV32I. Adicionalmente, os alvos são validados contra um subconjunto
-da suíte de testes de tortura do GCC.
+por alvo; a equivalência comportamental é verificada executando no Spike programas de teste
+autovalidantes, que conferem cada resultado contra valores calculados independentemente no próprio
+programa e sinalizam a primeira asserção violada por um código de saída distinto. Adicionalmente,
+os alvos são validados contra um subconjunto da suíte de testes de tortura do GCC.
 
 O resultado é uma toolchain funcional que permite a estudantes compilar programas C arbitrários e
 executá-los no processador que projetaram, fechando o ciclo pedagógico entre a implementação de
@@ -214,7 +215,9 @@ implemented as a GCC machine-description expand pattern.
 
 Correctness is validated on two independent layers: ISA compliance is verified by disassembling
 every compiled binary and checking every mnemonic against a per-target allowlist; behavioral
-equivalence is verified by differential execution on Spike against a reference RV32I compiler.
+equivalence is verified by executing self-validating test programs on Spike, each of which checks
+its computed results against values derived independently within the same program and signals the
+first violated assertion through a distinct exit code.
 Additionally, the targets are validated against a subset of the GCC compiler torture test suite.
 
 The result is a working toolchain that allows students to compile arbitrary C programs and execute
@@ -429,7 +432,7 @@ Validation addresses two correctness requirements defined in #chref(<ch-requirem
 
 ISA compliance is verified structurally by disassembling the compiled output and checking every mnemonic against a per-target allowlist.
 
-Behavioral equivalence is verified by differential execution: the same C program is compiled by both the custom target and a reference RV32I compiler, and both binaries are executed on the Spike ISA simulator @spike; the test passes when both produce identical exit codes.
+Behavioral equivalence is verified by execution: each test is a self-validating C program that exercises one operation category and compares every computed result against a value established independently within the same program, either a constant worked out by hand or an algebraic identity assembled from other operations. The program is compiled by the custom target and executed on the Spike ISA simulator @spike; it returns 0 when every assertion holds and a distinct nonzero code identifying the first failure otherwise, so the test passes when the simulator exits with code 0.
 
 A third validation layer exercises the compiler against a much larger, automatically generated corpus. The GCC test suite includes a _torture test_ mode that systematically varies optimization flags and source patterns across hundreds of programs, besides compiling `libgcc` against the custom target also stresses constant materialization, multi-word arithmetic, and calling-convention edge cases that hand-written behavioral tests would not cover.
 
@@ -1564,7 +1567,7 @@ Across the thirteen benchmarks that completed on both toolchains, synthesis infl
 
 == Discussion
 
-The results establish correctness first and cost second. On the correctness axis, the ISA compliance tests confirm that the compiler never emits a forbidden mnemonic. Behavioral equivalence is established independently by differential execution on Spike: every rvsc1 program produces the same exit code as the reference RV32I binary compiled from the same source, and every rvsc0 single-function program writes the same `tohost` value as its reference. Synthesis therefore changes how a computation is expressed, not what it computes.
+The results establish correctness first and cost second. On the correctness axis, the ISA compliance tests confirm that the compiler never emits a forbidden mnemonic. Behavioral equivalence is established independently by execution on Spike: every rvsc1 program verifies its own results against independently computed values and exits 0, and every rvsc0 single-function program writes the corresponding success token to `tohost`. Synthesis therefore changes how a computation is expressed, not what it computes.
 
 The cost of that re-expression is quantified along two dimensions. Statically, synthesis inflates code size by a mean of #sym.times 4.94 over the Embench suite (@tbl-embench-size), dynamically, it inflates the retired-instruction count by a mean of #sym.times 13.7 over the benchmarks that complete (@tbl-embench-perf). The dynamic penalty is the larger of the two because the costliest syntheses of the variable-count shift loops, each of which re-materializes its own back-edge every iteration (@sc1-sll), tend to sit inside the hottest loops, so their cost is multiplied by trip count rather than merely by static occurrence. Both penalties vary by more than an order of magnitude across workloads, from near-parity for multiply--add-dominated code (`matmult-int`, `ud`) to two orders of magnitude for shift- and comparison-heavy code (`xgboost`, `statemate`).
 
@@ -1578,11 +1581,11 @@ This work developed eight GCC compiler targets for the simplified RISC-V process
 
 The primary contribution is the set of synthesis techniques embedded in the GCC machine description. For the two most restricted targets, rvsc0 and rvsc1, eighteen distinct operations require synthesis, ranging from one-instruction replacements (NOT, immediate variants) to variable-length loops (SLL, SRL, SRA), multi-instruction identities (XOR, SLT, SLTU), read-modify-write sequences (LB, LBU, LH, LHU, SB, SH), and call-site code generation (JAL, JMP). The rvsc0 target additionally requires addi/shift-based materialization for LUI, since 32-bit constants cannot otherwise be constructed from the eight available instructions. Each synthesis was derived algebraically and embedded as a `define_expand` in `riscv.md`, so GCC selects and schedules the sequence as part of normal compilation with no programmer intervention.
 
-A secondary contribution is the validation methodology. Two independent test layers were developed and applied: an ISA compliance suite that disassembles every generated object with `objdump -M no-aliases` and verifies that no forbidden mnemonic appears, and a behavioral equivalence suite that executes rvsc1 and rvsc0 binaries on Spike and compares their outputs against a reference RV32I build. Together these layers confirm that synthesis is both correct by construction (no forbidden instruction is ever emitted) and correct by execution (the computed results are indistinguishable from those of a full-ISA compiler).
+A secondary contribution is the validation methodology. Two independent test layers were developed and applied: an ISA compliance suite that disassembles every generated object with `objdump -M no-aliases` and verifies that no forbidden mnemonic appears, and a behavioral equivalence suite of self-validating programs that execute rvsc1 and rvsc0 binaries on Spike and check each computed result against the value the C semantics require, reporting any mismatch through the exit code (rvsc1) or the `tohost` token (rvsc0). Together these layers confirm that synthesis is both correct by construction (no forbidden instruction is ever emitted) and correct by execution (the computed results match the values the C semantics require).
 
 == Results Summary
 
-Correctness was established for all synthesis cases in rvsc0 and rvsc1. All ISA compliance tests pass, and the differential behavioral tests confirm semantic equivalence across all tested programs. The rvsc2 target compiles the full Embench-IoT suite with code identical to the upstream GCC 17 baseline (geomean ratio = 1.000), confirming that the custom target configuration introduces no overhead relative to a stock build.
+Correctness was established for all synthesis cases in rvsc0 and rvsc1. All ISA compliance tests pass, and the behavioral tests confirm semantic equivalence across all tested programs. The rvsc2 target compiles the full Embench-IoT suite with code identical to the upstream GCC 17 baseline (geomean ratio = 1.000), confirming that the custom target configuration introduces no overhead relative to a stock build.
 
 The cost of synthesis was quantified on two axes. Statically, the synthesized rvsc1 target inflates code size by a mean of #sym.times 4.94 over the nineteen Embench benchmarks, with a range from #sym.times 1.41 (`ud`, few shifts) to #sym.times 16.39 (`statemate`, comparison-heavy control flow). Dynamically, it inflates retired instruction counts by a mean of #sym.times 13.7 over the thirteen benchmarks that completed within the time budget, with five benchmarks timing out entirely, an outcome expected from the worst-case variable-count shift loop depth of 187 instructions per operation.
 

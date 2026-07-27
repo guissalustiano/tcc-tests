@@ -1439,7 +1439,26 @@ The full suite covers 1 684 × 5 = 8 420 compiler+optimizer combinations. @tbl-t
   caption: [gcc.c-torture/execute results for rvsc1 (8 420 combinations)],
 ) <tbl-torture-results>
 
-"Skipped" denotes programs that fail to compile or link, or that are excluded up front as known-unsupported. The overwhelming majority (54 sources, filtered at every optimization level) trace back to a single cause unrelated to sc1's restricted instruction set: the linked newlib `libc.a`'s stdio wrappers (`printf`, `sprintf`, `fprintf`, and the `_chk`/`v`-prefixed variants) call internal reentrant symbols (`_vfprintf_r`, `_svfprintf_r`, `_vfiprintf_r`) that this newlib build never defines, so any test calling a `printf`-family function fails to link — a build/link configuration gap, not a compiler or ISA issue. Three more sources hit the same gap only at `-O0`, where the unoptimized `sprintf` call survives to link time; at higher optimization levels GCC eliminates or transforms the call before it reaches the linker. The remaining sources are excluded up front regardless of optimization level: five upstream-flagged "expensive" tests whose compile time alone exceeds budget, one using `_Decimal` floating point, one using x87-specific inline asm, three using `__int128` (unsupported on 32-bit RISC-V in general), and two using `sys/mman.h`, unavailable on this freestanding target.
+"Skipped" denotes programs that fail to compile or link, or that are excluded up front as known-unsupported. Fifty-four sources are excluded at every optimization level, in the seven categories of @tbl-torture-skips. None of them is related to sc1's restricted instruction set: they are runtime-library gaps, language features absent from 32-bit RISC-V in general, host-specific inline assembly, or compile-budget exhaustion.
+
+#figure(
+  table(
+    columns: (auto, auto, 1fr),
+    align: (left, right, left),
+    [*Category*], [*Sources*], [*Reason for exclusion*],
+    [`printf` family], [40], [Undefined internal newlib symbols at link time],
+    [Expensive tests], [5], [Upstream-flagged; compile time alone exceeds the budget],
+    [`__int128`], [3], [No 128-bit integer mode on any 32-bit RISC-V target],
+    [libm], [2], [`pow`/`floor` undefined; no libm built for this target],
+    [`sys/mman.h`], [2], [`mmap` unavailable on a freestanding target],
+    [`_Decimal`], [1], [Decimal floating point unsupported],
+    [x87 inline asm], [1], [x86-specific register constraints; not applicable to RISC-V],
+    [*Total*], [*54*], [],
+  ),
+  caption: [Torture-suite sources excluded at every optimization level, by cause],
+) <tbl-torture-skips>
+
+The two runtime-library categories, which together account for 42 of the 54, are both build configuration gaps rather than compiler or ISA issues. The linked newlib `libc.a`'s stdio wrappers (`printf`, `sprintf`, `fprintf`, and the `_chk`/`v`-prefixed variants) call internal reentrant symbols (`_vfprintf_r`, `_svfprintf_r`, `_vfiprintf_r`) that this newlib build never defines, so any test calling a `printf`-family function fails to link; likewise, no libm is built for this target, so the two tests calling `pow` and `floor` fail on the same kind of undefined reference. Three further sources hit the `printf` gap only at `-O0`, where the unoptimized `sprintf` call survives to link time — which is what raises that row of @tbl-torture-results to 57; at higher optimization levels GCC eliminates or transforms the call before it reaches the linker.
 
 An earlier revision of this suite reported 31 cases that appeared to time out at the 300-second Spike budget, attributed to shift-synthesis overhead. Root-causing them instead found a genuine backend correctness bug: for `!TARGET_AUIPC`, both the long-branch/jump synthesis and the call-address materialization used the same scratch register (`t1`) without declaring it clobbered, so an optimizer could leave a call executing with a stale register value pointing at a nearby loop instead of the intended callee — and, more subtly, the same missing declaration let IRA allocate an *unrelated* live value (e.g. a loaded word inside the byte/half-word store synthesis) to a register that a nearby shift-synthesis loop's back edge silently destroyed. Both were genuine miscompilations, not slow-but-correct code, and were confirmed via direct instruction-level tracing (`spike --log-commits`) on `920302-1.c` and `pr93249.c`, where a call or a merge step ended up executing with corrupted register/memory state. Fixing the register-clobber declarations resolved all 31 original cases with zero regressions (95/95 ISA compliance, 30/30 behavioral).
 

@@ -1,106 +1,68 @@
-Improvement backlog — from review of the rvscN GCC backend, tests, and main.typ
-(2026-07-11). Each task is a self-contained file in improvements/ with the
-instructions and context needed to complete it independently.
+Improvement backlog — from review of main.typ against commits 369680f..4f423ef
+(2026-07-27). Fresh start: the previous backlog is dropped in full. Each task is
+a self-contained file in improvements/ with the context needed to complete it
+independently.
 
-Suggested order (correctness first, then docs, then polish):
+All seven are documentation defects: main.typ drifted behind the backend across
+five commits. Nothing here is a code bug. Item 05 is the only one needing a
+measurement run; the rest are edits to main.typ.
 
- 1. [done] pr38051 -Os ra corruption
-    Fixed via NORA_REGS class + "yr" constraint on scratches of the three
-    _sc1 shift patterns (lshrsi3_sc1, ashrsi3_sc1, ashlsi3_sc1_var).
-    pr38051.c passes at -O0/-O1/-O2/-O3/-Os.
+Suggested order (contradictions first, then arithmetic, then polish):
 
- 2. [done] improvements/02-behav-all-opt-levels.md
-    tests/sc1/behav.py already loops OPT_LEVELS = [-O0,-O1,-O2,-O3,-Os] (see
-    commit 5e0ec12); confirmed with `just behav` — 30/30 pass across all
-    five levels for both branch.c and slt.c.
+ 1. [done] improvements/01-purge-const-shift-loop-prose.md
+    Replaced the §Future Work paragraph that proposed the constant-shift unroll
+    already shipped in c708790 (and quoted a $2b$ target the implementation beat
+    at $b$) with the genuinely open item: constant-count SRL/SRA are unrolled
+    but still linear in word width (159/195 worst case), a bitmask-and-recombine
+    formulation could improve on that, and the variable-count forms still pay 6
+    instructions per iteration to re-materialize the back-edge. Split main.typ:
+    1466 from two categories into three, inserting constant-count shifts
+    (straight-line, $b$ / 159 / 195) between constant-length and variable-length.
+    Rewrote the §Limitations claim at 1578 that synthesis "expands a shift into a
+    counted loop": sequential-ness holds in both cases, but the loop exists only
+    for variable counts, and the constant-count limitation is linearity, not
+    looping. Qualified 1550 and 1568 as variable-count where they attribute cost
+    to back-edge re-materialization and to the 187-instruction depth. Counts
+    re-measured against the installed toolchain rather than taken from the task
+    file: shr1=159, sra1=195, shift3=4 (also shr3=151, sra3=185, shr31=39,
+    sra31=45), matching @tab-synthesis-cost. §6 and the appendices untouched;
+    typst compile clean.
 
- 3. improvements/03-differential-behav-layer.md
-    Restore reference-compiler differential comparison (self-validating tests
-    can't catch symmetric miscompiles; Method chapter still promises it).
-    STILL OPEN: behav.py only checks `spike` exit code == 0 for the sc1
-    binary; there is no reference-compiler comparison yet.
+ 2. improvements/02-fix-torture-skip-breakdown.md
+    main.typ:1442 attributes all 54 KNOWN_UNSUPPORTED sources to the printf
+    family (actually 40), then lists 12 more that are already inside the 54, and
+    omits the 2 libm sources entirely. Reads as 66 against a table saying 54.
+    Ground-truth breakdown is in the task file.
 
- 4. [done] improvements/04-xor-derivation-rewrite.md
-    main.typ already rewrites the derivation to (a|b)-(a&b) (see commit
-    8c7b7fa): §sc1-xor proof, cost table, §sc1-example worked example, the
-    define_expand listing, and both ISA test-table cells all updated; new
-    corner case #4 "Register Aliasing in Dataflow-Disconnected Synthesis
-    Sequences" added at §sc1-cc-aliasing (main.typ:1440). *xorhi3_noxor's
-    a+b-2(a&b) form intentionally left unmerged, footnoted as tracked under
-    item 6. Follow-up cleanup: the rvsc0 behavioral test-table cell
-    (main.typ:1586) and stale "De Morgan" comments in four test sources
-    (tests/sc0/tests/isa/logic.c, tests/sc0/tests/behav/{logic,not}.c,
-    tests/sc1/tests/behav/logic.c) still described the old synthesis;
-    reworded to describe the cross-check formulas as independent identities
-    rather than implying the compiler still synthesizes XOR via De Morgan.
+ 3. improvements/03-remove-false-differential-claims.md
+    main.typ:1548, 1562, 1566 claim behavioral results are compared against a
+    reference RV32I build. No such comparison exists — both behav.py harnesses
+    only check for exit 0, and main.typ:1291 says so correctly. The thesis
+    contradicts itself. Task covers both resolutions (drop the claim, or build
+    the layer and invert the edits).
 
- 5. [done] improvements/05-delete-dead-branch-templates.md
-    Removed unreachable raw-asm SLT/SLTU branch templates (undeclared t2-t4
-    clobbers) from *branch<mode>'s GE/LT/GEU/LTU arms; replaced with
-    gcc_unreachable() (the pattern condition already guarantees TARGET_SLT
-    whenever those arms run). No length attr arms referenced TARGET_SLT, so
-    none needed removal. sc1: 95/95 ISA tests, 30/30 behav tests (all opt
-    levels) pass. Torture suite: 7749/8420 pass, 670 skipped, 1 pre-existing
-    unrelated failure (ashrdi-1.c -O2, DImode/long long shift — out of scope
-    per "No 64-bit Integers" limitation, triggers the documented branch-
-    relaxation caveat; unaffected by this change since it only touches
-    already-dead code paths).
+ 4. improvements/04-reframe-slt-synth-ice-paragraph.md
+    main.typ:1446 calls the two *branch<mode>_slt_synth ICEs "pre-existing,
+    unrelated" — they are defects in this work's own pattern. Reframing them as
+    found-by-the-improved-harness is both accurate and a better result. Also
+    splits the mismatched claim at main.typ:1295 about which harness shortcoming
+    hid which defect.
 
- 6. [done] improvements/06-factor-synthesis-helpers.md
-    Deduplicated slt/sltu synthesis into riscv_emit_slt_synth (cbranch +
-    cstore) and the no-LUI constant-construction idiom into
-    riscv_emit_const_no_lui (9 call sites: zero_extendhi expand + split,
-    extend<SHORT><SUPERQI>, movhi, ashrsi3_sc1 — one more site than the
-    original doc listed). Unified *xorhi3_noxor onto the (a|b)-(a&b)
-    identity used for SImode XOR. Verified as a pure refactor: sc0/sc1
-    generated assembly byte-identical before/after across the full ISA
-    test suites; sc1 95/95 ISA + 30/30 behav, sc0 60/60 ISA + 40/40 behav
-    all pass; sc2 rebuilds clean (no test suite yet). Torture suite:
-    7734/8420 pass, 685 skipped, 1 pre-existing unrelated failure
-    (ashrdi-1.c -O2, same DImode-shift gap noted in item 5, confirmed via
-    git-stash A/B test to predate this refactor). Committed as
-    ada605483e4.
+ 5. improvements/05-remeasure-embench-after-unroll.md
+    @tbl-embench-size and @tbl-embench-perf predate c708790 and the t1
+    register-clobber fix. The x4.94 and x13.7 headline figures are quoted in six
+    places. Needs a re-measure, a recorded compiler revision, and possibly a new
+    causal explanation if the overhead drops.
 
- 7. [done] improvements/07-rtx-costs-mem-slt.md
-    Extended riscv_rtx_costs beyond shifts: byte/half mem extends (~75) and
-    stores (~100-105), slt/sltu ordered comparisons (~65), xor (3). Verified
-    as correctness-neutral: sc1 full ISA + behav suites still pass after the
-    change (see riscv.cc, committed ac235cb2). Empirical result on the
-    hoped-for benefit was negative: re-ran all 20 (program, opt-level) pairs
-    from main.typ's @tbl-torture-timeouts post-fix and every one still
-    exceeds the 300s Spike budget — zero cleared. Root cause: rtx_costs only
-    steers codegen-shape decisions (inlining/GCSE/hoisting), not the fixed
-    loop-trip-count × per-iteration-synthesis-overhead product that actually
-    dominates these programs' runtime; none of the 11 flagged programs
-    contain redundant/hoistable synthesis instances for the cost model to
-    remove. Documented honestly in main.typ (new paragraph after
-    @tbl-torture-timeouts, main.typ:~1707) rather than claiming an
-    improvement that didn't happen. The cost fix is kept regardless since it
-    makes the cost model accurate, which is a correctness prerequisite for
-    other optimizer decisions even where it doesn't move this metric.
+ 6. improvements/06-cost-table-and-sh-mask-corrections.md
+    §6: the sh mask is described as `lui 0x10; addi -1` but the cost table lists
+    sh for rvsc0, which has no lui; @tab-synthesis-cost has no row for the
+    synthesized jump though §Contributions lists JMP; "eighteen distinct
+    operations" no longer matches the 20-row table; the table now mixes static
+    and dynamic counts in one column.
 
- 8. [done] improvements/08-document-mlui-flag.md
-    Added -mlui/TARGET_LUI to main.typ @tbl-flags and CLAUDE.md's target-
-    options table; added a paragraph in §sc0-lui naming the flag and the two
-    riscv.cc hooks (TARGET_LEGITIMATE_CONSTANT_P, TARGET_CANNOT_FORCE_CONST_MEM)
-    plus the riscv_split_symbol x0-base addressing trick; noted in
-    §sc1-registration that rvsc0.h extends rvsc1.h's CC1_SPEC with
-    %{!mlui:-mno-lui}; corrected CLAUDE.md's false "rvsc0 has no header"
-    claim. typst compile main.typ succeeds; every custom TARGET_* macro now
-    appears exactly once in @tbl-flags.
-
- 9. improvements/09-torture-reporting.md
-    Exact (not "~") torture numbers via --csv; separate KNOWN_SLOW from
-    compile skips; XFAIL pr38051 -Os; report torture_isa.py in Results.
-
-10. improvements/10-harness-self-test.md
-    Negative-control canary: reference-compiler output must FAIL the
-    allowlist, empty mnemonic extraction is an error (no vacuous passes).
-
-11. improvements/11-size-perf-data-scripts.md
-    Script the Program Size / Performance measurements (objdump counts,
-    spike --log-commits) and fill the TODO tables in ch-results.
-
-12. improvements/12-claude-md-refresh.md
-    CLAUDE.md drift: test layout, pk-based behav flow, opt levels, torture
-    runners, XOR identity, mlui, rvsc0.h, post-reload shift patterns.
+ 7. improvements/07-results-chapter-small-corrections.md
+    Copy-level: `sub x0, rs` missing its destination (twice), the same
+    illustration using rvsc3 in one place and rvsc2 in another, appendix listing
+    lengths off by one (181/216, not 182/217), and an unverified claim about the
+    three -O0-only skips.

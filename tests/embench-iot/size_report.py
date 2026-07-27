@@ -32,6 +32,8 @@ from pathlib import Path
 from elftools.elf.elffile import ELFFile
 from elftools.elf.constants import SH_FLAGS
 
+import provenance
+
 SCRIPT_DIR = Path(__file__).parent
 SRC_DIR = SCRIPT_DIR / "src"
 INSTALL = Path("/home/salust/p/scgcc/tests")
@@ -147,7 +149,7 @@ def main() -> None:
           f"(over {len(ratios_ref)} benchmarks)")
 
     if args.csv:
-        lines = ["benchmark," + ",".join(names)]
+        lines = [provenance.header("flags=-O2"), "benchmark," + ",".join(names)]
         for bench in benchmarks:
             r = results[bench.name]
             lines.append(bench.name + "," +

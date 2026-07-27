@@ -30,6 +30,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import provenance
+
 SCRIPT_DIR = Path(__file__).parent
 SRC_DIR = SCRIPT_DIR / "src"
 SUPPORT = SCRIPT_DIR / "support"
@@ -132,13 +134,18 @@ def main() -> None:
                     continue
                 res = count_retired(pk, elf, args.timeout)
                 if res is None:
-                    val, tag = "TIMEOUT", ""
+                    val = "TIMEOUT"
                 else:
                     n, rc = res
-                    val = n
-                    tag = "" if rc == 0 else f"!rc={rc}"
+                    # A nonzero exit means the program trapped or failed its own
+                    # verify_benchmark() check, so n counts the instructions of an
+                    # aborted run -- not a measurement of the benchmark.  Recording
+                    # it as a number regardless is what let four miscompiled
+                    # benchmarks read as unusually *fast* ones (edn at 0.1x native)
+                    # and silently enter the geomean.
+                    val = n if rc == 0 else f"FAIL(rc={rc})"
                 results[bench.name][name] = val
-                print(f" {name}={val}{tag}", end="", flush=True)
+                print(f" {name}={val}", end="", flush=True)
             print()
 
     print("\n| Benchmark | gcc17 | rvsc2 (native) | rvsc1 (synth) | sc1/sc2 | sc2/gcc17 |\n"
@@ -167,7 +174,9 @@ def main() -> None:
               f"(should be ~1.0; GCC-version baseline check)")
 
     if args.csv:
-        lines = ["benchmark,gcc17,sc2,sc1"]
+        lines = [provenance.header(f"spike={provenance.spike_version()} "
+                                   f"budget={args.timeout}s"),
+                 "benchmark,gcc17,sc2,sc1"]
         for bench in benchmarks:
             r = results[bench.name]
             lines.append(f"{bench.name},{r.get('gcc17')},{r.get('sc2')},{r.get('sc1')}")

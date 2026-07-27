@@ -1500,30 +1500,32 @@ Code size is measured as the `.text` (executable code) section of each benchmark
     columns: (auto, auto, auto, auto),
     align: (left, right, right, right),
     [*Benchmark*], [*gcc17*], [*rvsc1*], [*rvsc1 / gcc17*],
-    [`aha-mont64`],     [3 548],  [17 940],  [5.06],
-    [`crc32`],          [380],    [908],     [2.39],
-    [`depthconv`],      [608],    [3 532],   [5.81],
-    [`edn`],            [3 244],  [22 832],  [7.04],
-    [`huffbench`],      [2 140],  [8 688],   [4.06],
-    [`matmult-int`],    [936],    [1 476],   [1.58],
-    [`md5sum`],         [1 016],  [2 408],   [2.37],
-    [`nettle-aes`],     [4 444],  [46 872],  [10.55],
-    [`nettle-sha256`],  [6 976],  [44 588],  [6.39],
-    [`nsichneu`],       [19 668], [65 364],  [3.32],
-    [`picojpeg`],       [15 360], [149 496], [9.73],
-    [`qrduino`],        [12 852], [126 048], [9.81],
-    [`sglib-combined`], [10 824], [58 256],  [5.38],
-    [`slre`],           [4 256],  [27 720],  [6.51],
-    [`statemate`],      [6 484],  [106 244], [16.39],
-    [`tarfind`],        [528],    [2 620],   [4.96],
-    [`ud`],             [1 436],  [2 020],   [1.41],
-    [`wikisort`],       [7 744],  [20 032],  [2.59],
-    [`xgboost`],        [624],    [5 620],   [9.01],
+    [`aha-mont64`],     [3 548],  [29 320],  [8.26],
+    [`crc32`],          [380],    [1 752],   [4.61],
+    [`depthconv`],      [608],    [4 132],   [6.80],
+    [`edn`],            [3 244],  [40 320],  [12.43],
+    [`huffbench`],      [2 140],  [12 360],  [5.78],
+    [`matmult-int`],    [936],    [1 500],   [1.60],
+    [`md5sum`],         [1 016],  [2 424],   [2.39],
+    [`nettle-aes`],     [4 444],  [69 664],  [15.68],
+    [`nettle-sha256`],  [6 976],  [135 032], [19.36],
+    [`nsichneu`],       [19 668], [65 420],  [3.33],
+    [`picojpeg`],       [15 360], [240 568], [15.66],
+    [`qrduino`],        [12 852], [216 484], [16.84],
+    [`sglib-combined`], [10 824], [76 832],  [7.10],
+    [`slre`],           [4 256],  [38 040],  [8.94],
+    [`statemate`],      [6 484],  [144 276], [22.25],
+    [`tarfind`],        [528],    [3 324],   [6.30],
+    [`ud`],             [1 436],  [2 032],   [1.42],
+    [`wikisort`],       [7 744],  [41 520],  [5.36],
+    [`xgboost`],        [624],    [7 912],   [12.68],
   ),
-  caption: [Embench-IoT static code size (`.text` bytes, `-O2`) and rvsc1 expansion ratios],
+  caption: [Embench-IoT static code size (`.text` bytes, `-O2`) and rvsc1 expansion ratios. Measured with the backend at revision `16de133341e`.],
 ) <tbl-embench-size>
 
-Across the suite, synthesis inflates code size by a mean of #sym.times 4.94 relative to the `gcc17` baseline. The custom `rvsc2` target produces code identical to `gcc17` for all 19 benchmarks (geomean ratio = 1.000). The per-benchmark ratio tracks how shift- and comparison-heavy each workload is: the floating-point-dominated `ud` (few shifts) expands only #sym.times 1.41, whereas `statemate`, whose control flow is dominated by synthesized comparisons and branches, expands #sym.times 16.39.
+Across the suite, synthesis inflates code size by a mean of #sym.times 7.13 relative to the `gcc17` baseline. The custom `rvsc2` target produces code identical to `gcc17` for all 19 benchmarks (geomean ratio = 1.000). The per-benchmark ratio tracks how shift- and comparison-heavy each workload is: the floating-point-dominated `ud` (few shifts) expands only #sym.times 1.42, whereas `statemate`, whose control flow is dominated by synthesized comparisons and branches, expands #sym.times 22.25.
+
+This static penalty is the side of the ledger that the constant-count unroll made worse. Before shifts by a compile-time-known amount were unrolled, the same suite measured a geomean of #sym.times 4.94: a constant shift then cost one short loop regardless of the shift amount, whereas it now costs one instruction per bit position (@sc1-srl). The effect is confined exactly to the benchmarks that use such shifts, which is what makes the attribution safe --- `nettle-sha256` grew #sym.times 3.0 relative to its own earlier ratio, `crc32` #sym.times 1.9, and `edn`, `qrduino`, and `aha-mont64` between #sym.times 1.6 and #sym.times 1.8, while the four benchmarks with essentially no constant shifts (`nsichneu`, `ud`, `md5sum`, `matmult-int`) are unchanged to within one percent. The corresponding gain appears in the dynamic counts of @sec-embench-perf.
 
 == Program Performance
 
@@ -1533,43 +1535,47 @@ Since the target processor is single-cycle, every instruction retires in exactly
 
 The dynamic cost of a whole program depends on how often each synthesized instruction executes at run time. Simple instructions such as `not` or `xori` have a small absolute cost, while other instructions expand into a loop whose cost depends on the operand. This benchmark measures the real program impact, weighted by loop trip counts rather than by static frequency.
 
-Five benchmarks exceeded a 300-second Spike budget under rvsc1 and are reported as TIMEOUT.
+Under rvsc1, five of the nineteen benchmarks yield no measurement. Four of them --- `edn`, `qrduino`, `sglib-combined`, and `wikisort` --- trap on Spike with a load from an address outside any allocated section and are reported as _crash_. All four run correctly under rvsc2 and under the unrestricted `gcc17` build from identical sources and flags, so the fault lies in the synthesis path rather than in the benchmark or the simulation environment; they are miscompilations in this work's backend, of the same register-corruption family as the defects discussed in @sc1-torture-tests, and are not yet root-caused. The fifth, `nsichneu`, exceeds the 300-second Spike budget and is reported as _timeout_. Both categories are excluded from the geomean.
+
+That these four were crashes rather than results is itself a finding of the corrected harness, and repeats the lesson of @sc1-torture-tests exactly. The earlier measurement harness recorded a retired-instruction count even when the run exited nonzero, so an aborted benchmark entered the table as an ordinary number --- `edn` was previously published at 512 612 605 retired instructions, an unremarkable-looking #sym.times 7.5 overhead. The same benchmark now reports the 4 899 454 instructions it actually retires before trapping, which would be #sym.times 0.1: synthesis apparently running fourteen times faster than the native baseline, which is impossible and is what exposed the crash. The harness now records a failed exit as such and refuses to report a count for it.
 
 #figure(
   table(
     columns: (auto, auto, auto, auto),
     align: (left, right, right, right),
     [*Benchmark*], [*rvsc2 (native)*], [*rvsc1 (synth)*], [*Overhead*],
-    [`aha-mont64`],     [12 997 428], [_timeout_],       [---],
-    [`crc32`],          [5 991 188],  [130 556 929],     [21.8#sym.times],
-    [`depthconv`],      [54 552 784], [1 306 486 627],   [23.9#sym.times],
-    [`edn`],            [68 624 580], [512 612 605],      [7.5#sym.times],
-    [`huffbench`],      [2 399 142],  [_timeout_],       [---],
-    [`matmult-int`],    [24 445 873], [25 543 407],       [1.0#sym.times],
-    [`md5sum`],         [2 917 425],  [38 694 462],      [13.3#sym.times],
-    [`nettle-aes`],     [4 674 471],  [171 446 978],     [36.7#sym.times],
-    [`nettle-sha256`],  [4 917 841],  [_timeout_],       [---],
-    [`nsichneu`],       [2 514 597],  [14 689 559],       [5.8#sym.times],
-    [`picojpeg`],       [3 602 866],  [_timeout_],       [---],
-    [`qrduino`],        [5 140 049],  [_timeout_],       [---],
-    [`sglib-combined`], [3 005 822],  [68 953 363],      [22.9#sym.times],
-    [`slre`],           [2 983 415],  [88 220 929],      [29.6#sym.times],
-    [`statemate`],      [2 065 897],  [150 934 719],     [73.1#sym.times],
-    [`tarfind`],        [5 287 906],  [37 627 640],       [7.1#sym.times],
-    [`ud`],             [6 622 675],  [8 378 022],        [1.3#sym.times],
-    [`wikisort`],       [_linkfail_], [17 710 935],      [---],
-    [`xgboost`],        [3 804 604],  [433 520 452],    [113.9#sym.times],
+    [`aha-mont64`],     [12 997 204], [413 815 964],     [31.8#sym.times],
+    [`crc32`],          [5 990 964],  [73 262 841],      [12.2#sym.times],
+    [`depthconv`],      [54 552 560], [1 212 764 378],   [22.2#sym.times],
+    [`edn`],            [68 624 356], [_crash_],         [---],
+    [`huffbench`],      [2 398 918],  [80 112 818],      [33.4#sym.times],
+    [`matmult-int`],    [24 445 649], [25 540 918],       [1.0#sym.times],
+    [`md5sum`],         [2 917 201],  [38 693 756],      [13.3#sym.times],
+    [`nettle-aes`],     [4 674 247],  [82 012 574],      [17.5#sym.times],
+    [`nettle-sha256`],  [4 917 617],  [115 122 951],     [23.4#sym.times],
+    [`nsichneu`],       [2 514 373],  [_timeout_],       [---],
+    [`picojpeg`],       [3 602 642],  [178 337 882],     [49.5#sym.times],
+    [`qrduino`],        [5 139 825],  [_crash_],         [---],
+    [`sglib-combined`], [3 005 598],  [_crash_],         [---],
+    [`slre`],           [2 983 191],  [55 824 921],      [18.7#sym.times],
+    [`statemate`],      [2 065 673],  [121 957 127],     [59.0#sym.times],
+    [`tarfind`],        [5 287 682],  [27 670 243],       [5.2#sym.times],
+    [`ud`],             [6 622 451],  [8 377 250],        [1.3#sym.times],
+    [`wikisort`],       [_linkfail_], [_crash_],         [---],
+    [`xgboost`],        [3 804 380],  [304 933 438],     [80.2#sym.times],
   ),
-  caption: [Embench-IoT dynamic retired-instruction counts on Spike and rvsc1 run-time overhead. Geomean is over the thirteen benchmarks that completed on both toolchains.],
+  caption: [Embench-IoT dynamic retired-instruction counts on Spike and rvsc1 run-time overhead, measured with the backend at revision `16de133341e`. Geomean is over the fourteen benchmarks that completed on both toolchains.],
 ) <tbl-embench-perf>
 
-Across the thirteen benchmarks that completed on both toolchains, synthesis inflates the dynamic instruction count by a mean of #sym.times 13.7, roughly triple the #sym.times 4.94 static-size penalty, because the most expensive syntheses sit inside the hottest loops. The spread is wide and, as with code size, tracks each workload's reliance on synthesized instructions: `matmult-int` and `ud`, dominated by native multiply--add work, run at #sym.times 1.0 and #sym.times 1.3, whereas the shift- and rotate-heavy `xgboost` and the comparison-heavy `statemate` reach #sym.times 113.9 and #sym.times 73.1. This confirms the pedagogical point quantitatively: the run-time cost of an absent instruction is not a fixed tax but is paid in proportion to how often the program actually needs it.
+Across the fourteen benchmarks that completed on both toolchains, synthesis inflates the dynamic instruction count by a mean of #sym.times 15.5, roughly double the #sym.times 7.13 static-size penalty, because the most expensive syntheses sit inside the hottest loops. The spread is wide and, as with code size, tracks each workload's reliance on synthesized instructions: `matmult-int` and `ud`, dominated by native multiply--add work, run at #sym.times 1.0 and #sym.times 1.3, whereas the shift- and rotate-heavy `xgboost` and the comparison-heavy `statemate` reach #sym.times 80.2 and #sym.times 59.0. This confirms the pedagogical point quantitatively: the run-time cost of an absent instruction is not a fixed tax but is paid in proportion to how often the program actually needs it.
+
+The geomean is not comparable with the #sym.times 13.7 reported before the constant-count unroll, because the set it averages over is not the same one. Unrolling lowered the dynamic cost enough that four benchmarks which previously exhausted the Spike budget --- `aha-mont64`, `huffbench`, `nettle-sha256`, and `picojpeg` --- now complete, and they are among the most expensive in the suite (#sym.times 23.4 to #sym.times 49.5). Admitting them to the average raises it even though every individual benchmark became cheaper or stayed level: on the ten that completed both before and after, retired counts fell to between 0.48 and 1.00 of their earlier values, led by `nettle-aes` (0.48), `crc32` (0.56), and `slre` (0.63), while the shift-free `matmult-int`, `md5sum`, and `ud` were unchanged to within one part in ten thousand. The direction of that per-benchmark change is the unroll's dynamic dividend, paid for by the static growth reported in @tbl-embench-size; its exact size should not be read too closely, since the earlier figures also predate the register-clobber fix described in @sc1-torture-tests and therefore mix the two effects.
 
 == Discussion
 
-The results establish correctness first and cost second. On the correctness axis, the ISA compliance tests confirm that the compiler never emits a forbidden mnemonic. Behavioral equivalence is established independently by execution on Spike: every rvsc1 program verifies its own results against independently computed values and exits 0, and every rvsc0 single-function program writes the corresponding success token to `tohost`. Synthesis therefore changes how a computation is expressed, not what it computes.
+The results establish correctness first and cost second. On the correctness axis, the ISA compliance tests confirm that the compiler never emits a forbidden mnemonic. Behavioral equivalence is established independently by execution on Spike: every rvsc1 program verifies its own results against independently computed values and exits 0, and every rvsc0 single-function program writes the corresponding success token to `tohost`. Synthesis therefore changes how a computation is expressed, not what it computes. That holds across every program in the three test suites, but not yet across every program: four of the nineteen Embench benchmarks trap under rvsc1 while running correctly under rvsc2 (@tbl-embench-perf), so the synthesis path retains at least one defect that neither the hand-written suites nor the torture corpus reaches. The suites bound where correctness has been demonstrated; they do not establish it everywhere.
 
-The cost of that re-expression is quantified along two dimensions. Statically, synthesis inflates code size by a mean of #sym.times 4.94 over the Embench suite (@tbl-embench-size), dynamically, it inflates the retired-instruction count by a mean of #sym.times 13.7 over the benchmarks that complete (@tbl-embench-perf). The dynamic penalty is the larger of the two because the costliest syntheses of the variable-count shift loops, each of which re-materializes its own back-edge every iteration (@sc1-sll), tend to sit inside the hottest loops, so their cost is multiplied by trip count rather than merely by static occurrence. Both penalties vary by more than an order of magnitude across workloads, from near-parity for multiply--add-dominated code (`matmult-int`, `ud`) to two orders of magnitude for shift- and comparison-heavy code (`xgboost`, `statemate`).
+The cost of that re-expression is quantified along two dimensions. Statically, synthesis inflates code size by a mean of #sym.times 7.13 over the Embench suite (@tbl-embench-size), dynamically, it inflates the retired-instruction count by a mean of #sym.times 15.5 over the benchmarks that complete (@tbl-embench-perf). The dynamic penalty is the larger of the two because the costliest syntheses of the variable-count shift loops, each of which re-materializes its own back-edge every iteration (@sc1-sll), tend to sit inside the hottest loops, so their cost is multiplied by trip count rather than merely by static occurrence. Both penalties vary by more than an order of magnitude across workloads, from near-parity for multiply--add-dominated code (`matmult-int`, `ud`) to two orders of magnitude for shift- and comparison-heavy code (`xgboost`, `statemate`).
 
 For the pedagogical setting these targets are built for, this variation is the point rather than a limitation. The programs students write in an introductory single-cycle course, small loops, modest shift amounts, few byte-granular memory accesses, fall at the inexpensive end of both distributions, so the toolchain remains practical to use. At the same time, the wide spread makes the cost of each ISA restriction concrete and measurable: a student can compile the same source for rvsc1 and rvsc3, compare the `-S` output, and see exactly how many native instructions a single missing `sll` or `sb` expands into. The compiler thus turns an abstract statement about instruction-set design --- "omitting an instruction shifts its cost into software" --- into a number the student can read off the assembly.
 
@@ -1585,9 +1591,9 @@ A secondary contribution is the validation methodology. Two independent test lay
 
 == Results Summary
 
-Correctness was established for all synthesis cases in rvsc0 and rvsc1. All ISA compliance tests pass, and the behavioral tests confirm semantic equivalence across all tested programs. The rvsc2 target compiles the full Embench-IoT suite with code identical to the upstream GCC 17 baseline (geomean ratio = 1.000), confirming that the custom target configuration introduces no overhead relative to a stock build.
+Correctness was established for all synthesis cases exercised by the test suites in rvsc0 and rvsc1. All ISA compliance tests pass, and the behavioral tests confirm semantic equivalence across all tested programs; the Embench measurement described above additionally found four programs that trap under rvsc1, a defect outside the range those suites cover and not yet root-caused. The rvsc2 target compiles the full Embench-IoT suite with code identical to the upstream GCC 17 baseline (geomean ratio = 1.000), confirming that the custom target configuration introduces no overhead relative to a stock build.
 
-The cost of synthesis was quantified on two axes. Statically, the synthesized rvsc1 target inflates code size by a mean of #sym.times 4.94 over the nineteen Embench benchmarks, with a range from #sym.times 1.41 (`ud`, few shifts) to #sym.times 16.39 (`statemate`, comparison-heavy control flow). Dynamically, it inflates retired instruction counts by a mean of #sym.times 13.7 over the thirteen benchmarks that completed within the time budget, with five benchmarks timing out entirely, an outcome expected from the worst-case variable-count shift loop depth of 187 instructions per operation.
+The cost of synthesis was quantified on two axes. Statically, the synthesized rvsc1 target inflates code size by a mean of #sym.times 7.13 over the nineteen Embench benchmarks, with a range from #sym.times 1.42 (`ud`, few shifts) to #sym.times 22.25 (`statemate`, comparison-heavy control flow). Dynamically, it inflates retired instruction counts by a mean of #sym.times 15.5 over the fourteen benchmarks that completed within the time budget. One further benchmark exhausted that budget, an outcome expected from the worst-case variable-count shift loop depth of 187 instructions per operation, and four others trap under rvsc1 while running correctly under rvsc2 --- an unresolved miscompilation in the synthesis path, reported in @tbl-embench-perf and excluded from the mean.
 
 For the pedagogical use case, these figures are not a disqualifying limitation. The programs students write in an introductory course fall at the inexpensive end of both distributions. More importantly, the wide spread between workloads makes the cost of each absent instruction concrete and measurable: compiling the same source for rvsc1 and rvsc2 and diffing the assembly output shows exactly how many native instructions a missing `sll` or `sb` expands into.
 

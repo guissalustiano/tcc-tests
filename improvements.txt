@@ -96,11 +96,53 @@ Suggested order (contradictions first, then arithmetic, then polish):
     live value IRA misallocated -- not a provenance claim, so it stays.
     typst compile clean.
 
- 5. improvements/05-remeasure-embench-after-unroll.md
-    @tbl-embench-size and @tbl-embench-perf predate c708790 and the t1
-    register-clobber fix. The x4.94 and x13.7 headline figures are quoted in six
-    places. Needs a re-measure, a recorded compiler revision, and possibly a new
-    causal explanation if the overhead drops.
+ 5. [done] improvements/05-remeasure-embench-after-unroll.md
+    The drift was worse than the task assumed: the published CSVs were committed
+    07-17, so they predate not only the unroll (a72121e3cc9) but the whole 07-26
+    run of register-clobber fixes -- 2666f97a4cb (t1 call/jump collision,
+    NOTRAMP_REGS), ccd24732138 (t0/t1 clobbers on shift patterns) and
+    16de133341e (slt_synth constraints). The *installed* sc1 compiler was also
+    stale, built 19:24 against a tree whose last commit landed 19:55, so sc1 and
+    sc2 were rebuilt from HEAD first (ISA compliance re-verified 95/95) and every
+    number below comes from 16de133341e.
+
+    Static: geomean sc1/gcc17 rose x4.94 -> x7.13, range x1.42 (ud) to x22.25
+    (statemate); sc2/gcc17 still exactly 1.000 on all 19. The rise is the unroll
+    trading .text for retired instructions, and the attribution is clean because
+    only shift-using benchmarks moved: nettle-sha256 x3.0 against its own earlier
+    ratio, crc32 x1.9, edn/qrduino/aha-mont64 x1.6-x1.8, while nsichneu, ud,
+    md5sum and matmult-int are unchanged to within one percent.
+
+    Dynamic: geomean x15.5 over 14 benchmarks, against x13.7 over 13 before --
+    but the two are NOT comparable, and main.typ now says so. Every individual
+    benchmark got cheaper or stayed level (nettle-aes to 0.48 of its old count,
+    crc32 0.56, slre 0.63); the average rose only because four benchmarks that
+    used to exhaust the Spike budget now complete and are among the priciest in
+    the suite. The per-benchmark deltas still mix the unroll with the clobber
+    fixes, since the old figures predate both, and the prose is hedged
+    accordingly.
+
+    The run also turned up a real code defect, split out as item 8: edn, qrduino,
+    sglib-combined and wikisort segfault under rvsc1 while running correctly
+    under rvsc2, and nsichneu newly exceeds the 300 s budget. These were invisible
+    because perf_report.py recorded a retired-instruction count even for a run
+    that exited nonzero -- edn had been published at 512 612 605 (a believable
+    x7.5) and now reads x0.1, synthesis "outrunning" native, which is what gave
+    it away. Exactly the torture-harness lesson at main.typ:1470, repeated. The
+    harness now writes FAIL(rc=N) and reports no count for a failed run.
+
+    Task item 1 (script it) was already satisfied by size_report.py /
+    perf_report.py; what was missing was provenance, so tests/embench-iot/
+    provenance.py now stamps every CSV with the backend revision, date, spike
+    version and budget. Both tables carry the revision in their captions too.
+    Two correctness claims that the new data contradicted were qualified rather
+    than left standing: §Discussion's "synthesis changes how a computation is
+    expressed, not what it computes" and §Results Summary's "correctness was
+    established for all synthesis cases". Verified: 19 rows in both tables, the
+    prose timeout count matches the table, the caption's geomean base equals
+    19 - 1 timeout - 4 crashes = 14, and every ratio recomputes from the
+    published cells (geomean from the table itself = 15.54x). typst compile
+    clean.
 
  6. improvements/06-cost-table-and-sh-mask-corrections.md
     §6: the sh mask is described as `lui 0x10; addi -1` but the cost table lists
@@ -114,3 +156,20 @@ Suggested order (contradictions first, then arithmetic, then polish):
     illustration using rvsc3 in one place and rvsc2 in another, appendix listing
     lengths off by one (181/216, not 182/217), and an unverified claim about the
     three -O0-only skips.
+
+ 8. improvements/08-rvsc1-embench-miscompiles.md   [NEW -- found by item 5]
+    The only code defect in this backlog; everything else is documentation.
+    edn, qrduino, sglib-combined and wikisort trap under rvsc1 on Spike (exit
+    255, load from an address past .bss) while compiling and running correctly
+    under rvsc2 and gcc17 from identical sources, so the fault is in synthesis.
+    edn's faulting instruction is `lw a2,0(a3)` in jpegdct with a3 = 0x379f0,
+    sitting just after a variable-count shift-synthesis loop -- the shape of the
+    IRA register-corruption family that NOTRAMP_REGS, the t0/t1 clobbers and
+    NORA_REGS/=&yr each addressed for other registers, suggesting that
+    enumeration is still incomplete. Not proven; tracing where a3 is written is
+    the next step. nsichneu's new timeout is likely related and worth checking
+    for a stuck loop. Task file also records a separate latent bug found while
+    bisecting: -mshift on rvsc1 ICEs with "unrecognizable insn" on a plain
+    reg/reg lshiftrt, so the native shift define_insn stays gated off even when
+    TARGET_SHIFT is restored -- harmless for the shipped target, but it breaks
+    the define_insn/define_expand sync invariant in CLAUDE.md.

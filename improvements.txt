@@ -69,12 +69,32 @@ Suggested order (contradictions first, then arithmetic, then polish):
     compilador de referência over main.typ now returns nothing; typst compile
     clean.
 
- 4. improvements/04-reframe-slt-synth-ice-paragraph.md
-    main.typ:1446 calls the two *branch<mode>_slt_synth ICEs "pre-existing,
-    unrelated" — they are defects in this work's own pattern. Reframing them as
-    found-by-the-improved-harness is both accurate and a better result. Also
-    splits the mismatched claim at main.typ:1295 about which harness shortcoming
-    hid which defect.
+ 4. [done] improvements/04-reframe-slt-synth-ice-paragraph.md
+    Verified the premise in the gcc fork before editing, since the whole task
+    turns on it: *branch<mode>_slt_synth is this work's own pattern (first
+    appears with the sc1 slt synthesis, ada605483e4), and the fix commit
+    16de133341e0 says the operands "had a predicate ... but no constraint string
+    at all -- unlike the sibling *branch<mode> pattern, which has always used
+    r/rJ". The sibling is upstream's; the defective one is ours. So "pre-
+    existing, unrelated" was wrong on both counts, and main.typ:1468 now says
+    the ICEs were "both in a pattern this work itself introduced", modeled on
+    the upstream sibling, closing with the point the paragraph was underselling:
+    the defect lay in this work's own synthesis machinery, and surfaced only
+    once the harness stopped folding compile failures into one skip count --
+    the validation methodology exposing a defect in the code it was built to
+    check. Technical narrative (LRA / no constraint to act on / post-reload
+    split, plus the pr10352-1.c and arith-rand.c witnesses) kept verbatim.
+    Did not merge with the following paragraph as the task floated; instead
+    de-duplicated across the two, since that paragraph's three-shortcomings
+    list already carries the mechanism. Its opening lost the clause "which at
+    the time folded every compile failure into an undifferentiated skip count",
+    which attributed both defects to skip-folding, and now names the two escape
+    routes separately. Same split applied at the §Test Strategies end
+    (main.typ:1298): skip-folding hid the missing-constraint defect, while the
+    register-clobber defect surfaced as execution timeouts. The one remaining
+    "unrelated" in §7 (main.typ:1466) is the technical sense -- an unrelated
+    live value IRA misallocated -- not a provenance claim, so it stays.
+    typst compile clean.
 
  5. improvements/05-remeasure-embench-after-unroll.md
     @tbl-embench-size and @tbl-embench-perf predate c708790 and the t1

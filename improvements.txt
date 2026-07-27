@@ -28,11 +28,23 @@ Suggested order (contradictions first, then arithmetic, then polish):
     sra31=45), matching @tab-synthesis-cost. §6 and the appendices untouched;
     typst compile clean.
 
- 2. improvements/02-fix-torture-skip-breakdown.md
-    main.typ:1442 attributes all 54 KNOWN_UNSUPPORTED sources to the printf
-    family (actually 40), then lists 12 more that are already inside the 54, and
-    omits the 2 libm sources entirely. Reads as 66 against a table saying 54.
-    Ground-truth breakdown is in the task file.
+ 2. [done] improvements/02-fix-torture-skip-breakdown.md
+    Replaced the seven-category run-on sentence at main.typ:1442 with
+    @tbl-torture-skips, which partitions the 54 KNOWN_UNSUPPORTED sources
+    instead of overlapping them: printf 40, expensive 5, __int128 3, libm 2,
+    sys/mman.h 2, _Decimal 1, x87 asm 1. The old text attributed all 54 to the
+    printf family (actually 40), then listed 12 more as if they were additional
+    (reading as 66 against a table saying 54), and omitted the 2 libm sources
+    added by 4f423ef entirely. Counts derived mechanically from the
+    KNOWN_UNSUPPORTED comment blocks in tests/sc1/torture_behav.py rather than
+    from the old prose. libm now shares the "build configuration gap" sentence
+    with printf, since both fail as undefined references at link. The static-
+    sweep paragraph is untouched and stays consistent: its 35 front-end
+    rejections are __int128 (3x5) + sys/mman.h (2x5) + x87 (1x5) + _Decimal
+    (1x5), and printf/libm correctly do not appear there because they compile
+    fine and only fail at link. The -O0 trio sentence was kept verbatim, so
+    item 07 part 4 (naming the three sources and showing the mechanism rather
+    than asserting it) is still open. typst compile clean.
 
  3. improvements/03-remove-false-differential-claims.md
     main.typ:1548, 1562, 1566 claim behavioral results are compared against a

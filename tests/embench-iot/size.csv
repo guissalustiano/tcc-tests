@@ -1,4 +1,4 @@
-# gcc-fork=0b3abf309dd-dirty measured=2026-07-28 flags=-O2
+# gcc-fork=8a0646efee4-dirty measured=2026-07-28 flags=-O2
 benchmark,ref,gcc17,sc2,sc1
 aha-mont64,3708,3548,3548,29436
 crc32,516,380,380,1752

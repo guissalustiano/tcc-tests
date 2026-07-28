@@ -4,10 +4,13 @@ a self-contained file in improvements/ with the context needed to complete it
 independently.
 
 Items 1-7 were documentation defects: main.typ had drifted behind the backend
-across five commits. All are done. Items 8-10 are not documentation and were
-found by doing 5 and 6 -- re-measuring and re-deriving turned up two real code
-defects and one gap in what the test suites cover. Item 8 is done (it turned out
-to be two independent backend bugs, both fixed); 9 and 10 are open.
+across five commits. All are done. Items 8-11 are not documentation and were
+found by doing 5 and 6 -- re-measuring and re-deriving turned up real code
+defects and gaps in what the test suites cover, each of which uncovered the next.
+Items 8 and 10 are done: 8 was two independent backend miscompiles, 10 was
+hand-written libgcc assembly bypassing the ISA restrictions. Item 9 (cost-table
+figures understated 2-4x) and item 11 (the linked program is not ISA-clean, even
+though every compiled object is) are open.
 
 Suggested order (contradictions first, then arithmetic, then polish):
 
@@ -290,25 +293,64 @@ Suggested order (contradictions first, then arithmetic, then polish):
     analytic counting instead of differencing, since with no jalr there is no
     call to difference.
 
-10. improvements/10-libgcc-asm-violates-sc1-isa.md   [NEW -- found by item 8]
-    libgcc.a contains instructions sc1 does not implement: muldi3.o and div.o
-    carry native srli/slli. They come from upstream's hand-written
-    libgcc/config/riscv/div.S and muldi3.S, and -mno-shift is a compiler flag
-    with no effect on .S sources, so synthesis is bypassed entirely. Any sc1
-    program using * / or % links them.
+10. [done] improvements/10-libgcc-asm-violates-sc1-isa.md
+    Fixed in gcc f2e7bfaecbb. libgcc.a for rvsc0 and rvsc1 now contains zero
+    shift instructions.
 
-    Invisible from both directions at once, which is why it survived: main.py
-    and torture_isa.py disassemble compiler-produced objects and never look at
-    libgcc.a, while the behavioral tests run under spike --isa=rv32imac..., what
-    pk needs, so the forbidden instructions execute happily instead of trapping.
+    The write-up's "option 1" (drop the .S files, let libgcc2.c supply the C
+    versions) does not work -- libgcc2.c has no SImode divide or multiply units
+    at all. The five symbols div.S and muldi3.S actually provide here are
+    __divsi3, __modsi3, __udivsi3, __umodsi3 and __mulsi3, so the replacement
+    (libgcc/config/riscv/divmul_rvsc.c) had to be written. It contains no right
+    shifts: a constant >>1 costs ~159 instructions on these targets while <<1 is
+    one add, so both routines walk bits upward. Division by zero follows the
+    RISC-V spec, matching the div.S being replaced.
 
-    Affects no measurement in the thesis -- Spike runs them, so every behavioral
-    and Embench result stands -- but it does dent the pedagogical claim: on real
-    sc1 hardware a program using division would hit an illegal instruction.
-    Fix is probably to drop div.S/muldi3.S from LIB1ASMFUNCS in the t-rvsc
-    fragment so the generic libgcc2.c versions get compiled through the normal
-    path; the shifts involved are shift-by-one, the cheapest possible synthesis.
-    Worth also extending the ISA check to the linked ELF rather than to objects
-    only, which would have caught this immediately and subsumes the per-object
-    check.
+    Scoped to rvsc0/rvsc1 via a new t-rvsc-noshift fragment. Applying it to all
+    rvsc targets -- my first attempt -- cost rvsc2 a factor of two on the
+    64-bit-multiply-heavy benchmarks and pushed sc2/gcc17 from 1.004 to 1.774,
+    since rvsc2 implements shifts natively and the assembly is legal there. The
+    multi3_rvsc.c replacement and the blanket -O0 on libgcc2.c were moved to the
+    same fragment for the same reason: both are workarounds for IRA misbehaviour
+    inside synthesis loops, which only exist where the ISA lacks the instruction,
+    and both had been slowing rvsc2 for nothing.
 
+    The real trap was in include/longlong.h, not in the C. Its __muluw3 is inline
+    asm calling __mulsi3 with a clobber list of only "ra","a2","a3", commented
+    "We rely on the fact that MULUW3 doesn't clobber the t-registers" -- true of
+    muldi3.S, not of the symbol, and unenforced. A C __mulsi3 clobbers whatever
+    the allocator picks, so the asm corrupted its caller and __muldi3 returned
+    wrong cross terms whenever either operand's high word was nonzero. That broke
+    24 torture cases. Targets without the assembly now define __RVSC_NO_MULASM__
+    and get a plain multiply; everyone else is untouched. Diagnosing it needed
+    host-computed reference values -- comparing against rvsc2 was misleading,
+    because its libgcc is a different build.
+
+    Cost, and it is large: sc1 no longer benefits from instructions it cannot
+    execute. Dynamic geomean goes x13.9 over 18 benchmarks to x22.2 over 19, with
+    the division-heavy ones moving most (ud x1.3 -> x41.5, tarfind x5.2 -> x53.8,
+    matmult-int x1.0 -> x3.6). Static geomean is unchanged at x7.13, since that
+    measurement is object-level and never included libgcc. wikisort now links
+    under rvsc2, so all 19 benchmarks are in the geomean.
+
+    Verified: ISA 95/95 (sc1) and 60/60 (sc0), behavioral 30/30 and 45/45, static
+    torture sweep 8145/8145 clean, full torture execute suite 8142/8420 with 0
+    failures, and __mulsi3/__muldi3/divide checked against host-computed values.
+
+11. improvements/11-linked-program-not-isa-clean.md   [NEW -- found by item 10]
+    Extending the allowlist check from objects to the linked ELF shows the
+    library was never the whole story: a linked sc1 program still contains auipc,
+    andi, bgeu, bltu, bne, csrrw, ecall, jal, sb and slli. Two causes. First,
+    middle-end libcalls -- ordinary calls correctly use lui/jalr, but a libcall
+    such as the __mulsi3 reference inside _divdi3.o is emitted as a `call' pseudo
+    that the assembler expands to auipc/jalr and the linker does not relax away;
+    that one is this work's own defect and is the part worth fixing. Second, the
+    C runtime: csrrw and ecall come from the HTIF/syscall layer and the rest from
+    newlib, which is a scope question -- a bare-metal sc1 processor has no ecall
+    target -- and probably wants deciding in §7 rather than fixing.
+
+    Affects no measurement, since Spike executes all of it. It does mean "every
+    object the compiler produced is ISA-clean" is true and verified, while "the
+    binary runs on the processor the student built" is not yet. Suggested fix is
+    a linked-ELF allowlist check in the behavioral harnesses, reported separately
+    from the per-object result so the two claims stay distinguishable.

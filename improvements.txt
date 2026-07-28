@@ -3,9 +3,11 @@ Improvement backlog — from review of main.typ against commits 369680f..4f423ef
 a self-contained file in improvements/ with the context needed to complete it
 independently.
 
-All seven are documentation defects: main.typ drifted behind the backend across
-five commits. Nothing here is a code bug. Item 05 is the only one needing a
-measurement run; the rest are edits to main.typ.
+Items 1-7 were documentation defects: main.typ had drifted behind the backend
+across five commits. All are done. Items 8-10 are not documentation and were
+found by doing 5 and 6 -- re-measuring and re-deriving turned up two real code
+defects and one gap in what the test suites cover. Item 8 is mostly fixed, 9 and
+10 are open.
 
 Suggested order (contradictions first, then arithmetic, then polish):
 
@@ -114,6 +116,10 @@ Suggested order (contradictions first, then arithmetic, then polish):
     ratio, crc32 x1.9, edn/qrduino/aha-mont64 x1.6-x1.8, while nsichneu, ud,
     md5sum and matmult-int are unchanged to within one percent.
 
+    [Superseded by item 8: fixing the t0 defect this section's crashes exposed
+    moved the dynamic figures again, to x12.6 over 17 benchmarks. The static
+    geomean survived at x7.13. main.typ carries the item 8 numbers.]
+
     Dynamic: geomean x15.5 over 14 benchmarks, against x13.7 over 13 before --
     but the two are NOT comparable, and main.typ now says so. Every individual
     benchmark got cheaper or stayed level (nettle-aes to 0.48 of its old count,
@@ -217,22 +223,46 @@ Suggested order (contradictions first, then arithmetic, then polish):
     the length sprintf returns, so the call cannot merely be discarded. The
     prose now names all three and says so.
 
- 8. improvements/08-rvsc1-embench-miscompiles.md   [NEW -- found by item 5]
-    The only code defect in this backlog; everything else is documentation.
-    edn, qrduino, sglib-combined and wikisort trap under rvsc1 on Spike (exit
-    255, load from an address past .bss) while compiling and running correctly
-    under rvsc2 and gcc17 from identical sources, so the fault is in synthesis.
-    edn's faulting instruction is `lw a2,0(a3)` in jpegdct with a3 = 0x379f0,
-    sitting just after a variable-count shift-synthesis loop -- the shape of the
-    IRA register-corruption family that NOTRAMP_REGS, the t0/t1 clobbers and
-    NORA_REGS/=&yr each addressed for other registers, suggesting that
-    enumeration is still incomplete. Not proven; tracing where a3 is written is
-    the next step. nsichneu's new timeout is likely related and worth checking
-    for a stuck loop. Task file also records a separate latent bug found while
-    bisecting: -mshift on rvsc1 ICEs with "unrecognizable insn" on a plain
-    reg/reg lshiftrt, so the native shift define_insn stays gated off even when
-    TARGET_SHIFT is restored -- harmless for the shipped target, but it breaks
-    the define_insn/define_expand sync invariant in CLAUDE.md.
+ 8. [mostly done] improvements/08-rvsc1-embench-miscompiles.md
+    Root cause found and fixed in gcc 0b3abf309dd; 4 of the 5 failures resolved,
+    qrduino still open.
+
+    The absolute-address sequences replacing auipc-relative jumps and calls
+    hardcode t0 in raw asm text -- the jump, six ordered-comparison/branch-NE
+    forms, indirect jump, tablejump and both call sequences -- and none declares
+    the clobber in RTL. t1 was already reserved as fixed in
+    riscv_conditional_register_usage for exactly this reason, but when
+    2666f97a4cb moved the jump synthesis t1 -> t0 to avoid the call-address
+    temporary, the reservation did not follow. Every plain jump could therefore
+    destroy a live t0. Reserving t0 fixes the whole family in one place rather
+    than pattern by pattern; it costs one allocatable register on sc0/sc1.
+
+    Found by reducing edn to a standalone jpegdct (about 40 lines), then reading
+    the spike --log-commits trace backwards: t0 held an array offset across a
+    loop back edge, the jump overwrote it with its own target, `sw t0,40(sp)`
+    spilled that, and the reload became a wild pointer.
+
+    nsichneu's "timeout" was the same defect, not slowness -- it now retires
+    14682354 against 14689559 before the defect. Two benchmarks that had been
+    passing were also doing wasted work: aha-mont64 413815964 -> 197361701 and
+    depthconv 1212764378 -> 593772817, both roughly halving. So the corruption
+    was inflating results even where nothing crashed.
+
+    Verified: ISA 95/95, behavioral 30/30, torture static sweep 8150/8150 clean,
+    0 ICEs, 0 violations. Both Embench tables re-measured and main.typ updated:
+    static geomean unchanged at x7.13 (15 rows moved under 0.4% from the lost
+    register), dynamic geomean x15.5 over 14 -> x12.6 over 17, and the prose that
+    described four crashes and a timeout now describes the fix. Table captions
+    cite 0b3abf309dd.
+
+    Still open: qrduino fails its output check at -O2/-O3 (passes -O0/-O1/-Os,
+    passes under rvsc2). Established so far: it is the memcmp that fails, not the
+    heap check; the first wrong byte is index 1 of 22; it survives -fno-inline,
+    -fno-schedule-insns2, -fno-reorder-blocks, -fno-gcse, -fno-tree-vectorize,
+    -fno-ipa-cp, -fno-strict-aliasing; no single -m flag fixes it; and compiling
+    any one TU at -O1 -- even support/main.c, which cannot touch the encoder's
+    arithmetic -- makes it pass, so it looks layout- or allocation-sensitive.
+    Also noted: -mbyte and -mandi fail to build at all, worth a separate look.
 
  9. improvements/09-cost-table-dynamic-counts-stale.md   [NEW -- found by item 6]
     Every row of @tab-synthesis-cost whose expansion contains a loop is
@@ -249,3 +279,26 @@ Suggested order (contradictions first, then arithmetic, then polish):
     presumed equally stale; the straight-line rows are fine. rvsc0 needs
     analytic counting instead of differencing, since with no jalr there is no
     call to difference.
+
+10. improvements/10-libgcc-asm-violates-sc1-isa.md   [NEW -- found by item 8]
+    libgcc.a contains instructions sc1 does not implement: muldi3.o and div.o
+    carry native srli/slli. They come from upstream's hand-written
+    libgcc/config/riscv/div.S and muldi3.S, and -mno-shift is a compiler flag
+    with no effect on .S sources, so synthesis is bypassed entirely. Any sc1
+    program using * / or % links them.
+
+    Invisible from both directions at once, which is why it survived: main.py
+    and torture_isa.py disassemble compiler-produced objects and never look at
+    libgcc.a, while the behavioral tests run under spike --isa=rv32imac..., what
+    pk needs, so the forbidden instructions execute happily instead of trapping.
+
+    Affects no measurement in the thesis -- Spike runs them, so every behavioral
+    and Embench result stands -- but it does dent the pedagogical claim: on real
+    sc1 hardware a program using division would hit an illegal instruction.
+    Fix is probably to drop div.S/muldi3.S from LIB1ASMFUNCS in the t-rvsc
+    fragment so the generic libgcc2.c versions get compiled through the normal
+    path; the shifts involved are shift-by-one, the cheapest possible synthesis.
+    Worth also extending the ISA check to the linked ELF rather than to objects
+    only, which would have caught this immediately and subsumes the per-object
+    check.
+

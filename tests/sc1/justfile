@@ -20,6 +20,10 @@ torture-isa:
 torture-behav:
     PATH="{{prefix}}/bin:$PATH" python3 torture_behav.py
 
+# ISA compliance of the linked program, not just of compiled objects
+linked-isa:
+    PATH="{{prefix}}/bin:$PATH" python3 linked_isa.py
+
 # Behavioral: compile self-validating tests with sc1, run on Spike via pk (exit 0 = pass)
 behav:
     PATH="{{prefix}}/bin:$PATH" python3 behav.py

@@ -10,8 +10,9 @@ defects and gaps in what the test suites cover, each of which uncovered the next
 Items 8, 9 and 10 are done: 8 was two independent backend miscompiles, 9 found
 the cost table wrong in both directions rather than merely understated, and 10
 was hand-written libgcc assembly bypassing the ISA restrictions entirely.
-Item 11 -- the linked program is not ISA-clean, even though every compiled object
-is -- is the only one still open.
+Item 11 is mostly done: the gap is now measured and checked at the linked
+binary, and the thesis states the compiled-vs-linked claims separately; a newlib
+rebuild is the one piece left.
 
 Suggested order (contradictions first, then arithmetic, then polish):
 
@@ -363,20 +364,41 @@ Suggested order (contradictions first, then arithmetic, then polish):
     torture sweep 8145/8145 clean, full torture execute suite 8142/8420 with 0
     failures, and __mulsi3/__muldi3/divide checked against host-computed values.
 
-11. improvements/11-linked-program-not-isa-clean.md   [NEW -- found by item 10]
-    Extending the allowlist check from objects to the linked ELF shows the
-    library was never the whole story: a linked sc1 program still contains auipc,
-    andi, bgeu, bltu, bne, csrrw, ecall, jal, sb and slli. Two causes. First,
-    middle-end libcalls -- ordinary calls correctly use lui/jalr, but a libcall
-    such as the __mulsi3 reference inside _divdi3.o is emitted as a `call' pseudo
-    that the assembler expands to auipc/jalr and the linker does not relax away;
-    that one is this work's own defect and is the part worth fixing. Second, the
-    C runtime: csrrw and ecall come from the HTIF/syscall layer and the rest from
-    newlib, which is a scope question -- a bare-metal sc1 processor has no ecall
-    target -- and probably wants deciding in §7 rather than fixing.
+11. [mostly done] improvements/11-linked-program-not-isa-clean.md
+    Characterised, checked, and partly fixed; one concrete newlib change left.
 
-    Affects no measurement, since Spike executes all of it. It does mean "every
-    object the compiler produced is ISA-clean" is true and verified, while "the
-    binary runs on the processor the student built" is not yet. Suggested fix is
-    a linked-ELF allowlist check in the behavioral harnesses, reported separately
-    from the per-object result so the two claims stay distinguishable.
+    The write-up's cause 1 was wrong. auipc is NOT coming from middle-end
+    libcalls -- the compiler emits lui/jalr for those at every optimization
+    level, verified directly. The auipc I saw in _divdi3.o came from a stale
+    libgcc.a built before the item 8 and 10 fixes. The current one has none, so
+    there is no backend defect here at all.
+
+    What is actually left, from scanning 30 linked behavioral binaries:
+      program + all compiler-generated code (libgcc included)  -- CLEAN
+      _start (crt0)                     auipc csrrw jal slli
+      _read/_write/_sbrk/_exit/...      ecall
+      memset                            andi auipc bgeu bltu bne jal sb slli
+
+    The ecall stubs are not removable and arguably not a defect: a program that
+    talks to a host needs a mechanism, and a bare-metal sc1 processor has none --
+    which is exactly why the rvsc0 harness runs with no libc. memset and its
+    neighbours are the same class as libgcc's div.S.
+
+    Added tests/sc1/linked_isa.py (`just linked-isa`), which disassembles the
+    whole linked ELF and partitions it: compiler-generated code must be clean and
+    is, while the hand-written runtime is listed separately with a reason per
+    symbol rather than silently ignored. This is the check that would have caught
+    the libgcc defect on day one. §7 now states the two claims separately --
+    everything compiled is ISA-clean, everything linked is not yet -- instead of
+    letting the first imply the second.
+
+    Still open, and the route is clear: newlib/configure.host maps rvsc* to
+    machine_dir=riscv, which pulls in memset.S/memcpy-asm.S/memmove.S/strcmp.S.
+    Generic C versions of all four exist in libc/string/. Setting machine_dir
+    empty picks them up but drops setjmp.S, the one machine file with no generic
+    equivalent, which six torture tests need -- and setjmp.S is itself already
+    sc1-legal (sw/lw/li/ret only). So the fix is a machine dir containing just
+    setjmp.S. That means new libc_a_SOURCES entries and hence regenerating
+    newlib's Makefile.in with automake, which is a large risky change to a
+    third-party tree for a defect that affects no measurement here. Left for a
+    session that wants to take newlib on.

@@ -1,5 +1,47 @@
 # A linked sc1 program is not ISA-clean, even though every compiled object is
 
+> **STATUS: characterised, checked, and partly fixed.** The check now exists
+> (`tests/sc1/linked_isa.py`, `just linked-isa`) and §7 states the two claims
+> separately. What remains open is one concrete newlib rebuild, described at the end.
+>
+> **Cause 1 was wrong.** This write-up blamed `auipc` on middle-end libcalls. It is not a
+> backend gap: the compiler emits `lui`+`jalr` for libcalls at every optimization level,
+> verified directly. The `auipc` seen in `_divdi3.o` came from a *stale* `libgcc.a` built
+> before the item 8 and 10 fixes; the current one has none. Nothing to fix here.
+>
+> **What is actually left**, from scanning thirty linked behavioral binaries:
+>
+> | source | mnemonics | status |
+> |---|---|---|
+> | program + all compiler-generated code, `libgcc` included | -- | **clean** |
+> | `_start` (crt0) | `auipc csrrw jal slli` | hand-written assembly |
+> | `_read`/`_write`/`_sbrk`/`_exit`/`_close`/`_lseek` | `ecall` | proxy-kernel stubs |
+> | `memset` | `andi auipc bgeu bltu bne jal sb slli` | newlib `memset.S` |
+>
+> The `ecall` stubs are not removable in this environment and arguably not a defect: a
+> program that talks to a host needs a mechanism, and a bare-metal sc1 processor has none,
+> which is exactly why the rvsc0 harness runs with no libc at all. `memset` and its
+> neighbours are the same class of defect as libgcc's `div.S`.
+>
+> **The newlib fix, and why it is not done here.** `newlib/configure.host` maps `rvsc*` to
+> `machine_dir=riscv`, which pulls in `memset.S`, `memcpy-asm.S`, `memmove.S` and
+> `strcmp.S`. Generic C versions of all four exist in `libc/string/`. Two routes, both
+> obstructed:
+>
+> - Setting `machine_dir=` empty for rvsc0/rvsc1 picks up the C versions, but also drops
+>   `setjmp.S`, which is the only machine file with no generic equivalent and which six
+>   torture tests need. (`setjmp.S` is itself already sc1-legal -- it is `sw`/`lw`/`li`/`ret`
+>   only -- so a machine directory containing just that file would work.)
+> - Adding such a directory means new entries in `libc_a_SOURCES`, which requires
+>   regenerating newlib's `Makefile.in` with automake. The available automake is 1.18.1;
+>   running it against this tree is a large, risky change to a third-party project for a
+>   defect that affects no measurement.
+>
+> The route is clear enough to hand over: add `newlib/libc/machine/rvsc/` containing only
+> `setjmp.S` (copied unchanged) plus a `Makefile.inc` listing it, point `rvsc0*|rvsc1*` at it
+> in `configure.host`, and regenerate. Every string routine then comes from `libc/string/`
+> as ordinary C and passes through the synthesis path.
+
 Found while fixing `improvements/10`, by doing the thing that item's "Also worth doing"
 section suggested: running the mnemonic allowlist over a linked ELF instead of over objects.
 

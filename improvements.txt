@@ -6,8 +6,8 @@ independently.
 Items 1-7 were documentation defects: main.typ had drifted behind the backend
 across five commits. All are done. Items 8-10 are not documentation and were
 found by doing 5 and 6 -- re-measuring and re-deriving turned up two real code
-defects and one gap in what the test suites cover. Item 8 is mostly fixed, 9 and
-10 are open.
+defects and one gap in what the test suites cover. Item 8 is done (it turned out
+to be two independent backend bugs, both fixed); 9 and 10 are open.
 
 Suggested order (contradictions first, then arithmetic, then polish):
 
@@ -223,47 +223,57 @@ Suggested order (contradictions first, then arithmetic, then polish):
     the length sprintf returns, so the call cannot merely be discarded. The
     prose now names all three and says so.
 
- 8. [mostly done] improvements/08-rvsc1-embench-miscompiles.md
-    Root cause found and fixed in gcc 0b3abf309dd; 4 of the 5 failures resolved,
-    qrduino still open.
+ 8. [done] improvements/08-rvsc1-embench-miscompiles.md
+    Two distinct backend defects, both found and fixed; all nineteen Embench
+    benchmarks now execute correctly under rvsc1.
 
-    The absolute-address sequences replacing auipc-relative jumps and calls
-    hardcode t0 in raw asm text -- the jump, six ordered-comparison/branch-NE
-    forms, indirect jump, tablejump and both call sequences -- and none declares
-    the clobber in RTL. t1 was already reserved as fixed in
-    riscv_conditional_register_usage for exactly this reason, but when
-    2666f97a4cb moved the jump synthesis t1 -> t0 to avoid the call-address
-    temporary, the reservation did not follow. Every plain jump could therefore
-    destroy a live t0. Reserving t0 fixes the whole family in one place rather
-    than pattern by pattern; it costs one allocatable register on sc0/sc1.
+    (a) gcc 0b3abf309dd -- the absolute-address sequences replacing
+    auipc-relative jumps and calls hardcode t0 in raw asm text (jump, six
+    ordered-comparison/branch-NE forms, indirect jump, tablejump, both call
+    sequences), none declaring the clobber in RTL. t1 was already reserved as
+    fixed for exactly this reason, but when 2666f97a4cb moved the jump
+    synthesis t1 -> t0 the reservation did not follow, so any plain jump could
+    destroy a live t0. Fixed edn, sglib-combined, wikisort (segfaults) and
+    nsichneu (a diversion, not slowness -- 14682354 retired against 14689559
+    before the defect). Two benchmarks that had been passing were also doing
+    wasted work: aha-mont64 413815964 -> 197361701, depthconv 1212764378 ->
+    593772817. Found by reducing edn to a 40-line jpegdct and reading the
+    spike --log-commits trace backwards.
 
-    Found by reducing edn to a standalone jpegdct (about 40 lines), then reading
-    the spike --log-commits trace backwards: t0 held an array offset across a
-    loop back edge, the jump overwrote it with its own target, `sw t0,40(sp)`
-    spilled that, and the reload became a wild pointer.
+    (b) gcc 8a0646efee4 -- qrduino did not share that cause. With no sb, a byte
+    store becomes a read-modify-write of the enclosing word, but the RTL still
+    names only the byte, and alias analysis traces the aligned address through
+    the `and' with -4 to the object's own symbol. Two stores to distinct char
+    globals therefore looked non-conflicting and both word loads sank above both
+    word stores. initecc does `VERSION = vers; WD = 17 + 4 * vers;' on adjacent
+    unsigned char globals, so the second store wrote back its stale copy of the
+    first: WD correct, VERSION zero, doaligns() took its early return, and the
+    QR frame came out wrong. Not a qrduino bug at all -- six lines reproduce it:
+    `unsigned char A, B; void f(unsigned char v){ A=v; B=17+4*v; }' loses A at
+    -O2/-O3. Fixed by routing all nine synthesized word MEMs through
+    riscv_subword_container_mem (alias set 0 + MEM_VOLATILE_P). Found by
+    bisecting the encoder with checksum probes: output -> fillframe ->
+    initframe -> doaligns doing nothing -> VERSION reading 0 while WD read 25.
 
-    nsichneu's "timeout" was the same defect, not slowness -- it now retires
-    14682354 against 14689559 before the defect. Two benchmarks that had been
-    passing were also doing wasted work: aha-mont64 413815964 -> 197361701 and
-    depthconv 1212764378 -> 593772817, both roughly halving. So the corruption
-    was inflating results even where nothing crashed.
+    Cost of (b): a synthesized sub-word access can no longer reuse a word its
+    neighbour just loaded. Almost all of it lands on statemate, x59 -> x107
+    dynamic; static geomean is unchanged at x7.13.
 
-    Verified: ISA 95/95, behavioral 30/30, torture static sweep 8150/8150 clean,
-    0 ICEs, 0 violations. Both Embench tables re-measured and main.typ updated:
-    static geomean unchanged at x7.13 (15 rows moved under 0.4% from the lost
-    register), dynamic geomean x15.5 over 14 -> x12.6 over 17, and the prose that
-    described four crashes and a timeout now describes the fix. Table captions
-    cite 0b3abf309dd.
+    Verified: ISA 95/95 (sc1) and 60/60 (sc0), behavioral 30/30 (sc1) and 45/45
+    (sc0), static torture sweep 8150/8150 clean with 0 ICEs and 0 violations,
+    full torture execute suite 8145/8420 with 2 failures against 36 before.
+    Both remaining failures were 20030125-1.c at -O1/-Os, which upstream guards
+    with dg-require-effective-target c99_runtime; this target has no C99 math
+    runtime, GCC correctly declines to narrow floor -> floorf, and the test's own
+    weak floor aborts. The harness parses dg-options but not
+    dg-require-effective-target, so the test joins KNOWN_UNSUPPORTED with the
+    other inapplicable ones, giving 8142/8420, 278 skipped, 0 failed.
 
-    Still open: qrduino fails its output check at -O2/-O3 (passes -O0/-O1/-Os,
-    passes under rvsc2). Established so far: it is the memcmp that fails, not the
-    heap check; the first wrong byte is index 1 of 22; it survives -fno-inline,
-    -fno-schedule-insns2, -fno-reorder-blocks, -fno-gcse, -fno-tree-vectorize,
-    -fno-ipa-cp, -fno-strict-aliasing; no single -m flag fixes it; and compiling
-    any one TU at -O1 -- even support/main.c, which cannot touch the encoder's
-    arithmetic -- makes it pass, so it looks layout- or allocation-sensitive.
-    Also noted: -mbyte and -mandi fail to build at all, worth a separate look.
-
+    Both Embench tables re-measured and main.typ updated: dynamic geomean x12.6
+    over 17 -> x13.9 over 18 (the 19th, wikisort, has no rvsc2 baseline), static
+    x7.13, captions cite 8a0646efee4. The §Discussion and §Results Summary
+    correctness qualifications added when the crashes were found are now
+    resolved rather than narrowed, since nothing is left failing.
  9. improvements/09-cost-table-dynamic-counts-stale.md   [NEW -- found by item 6]
     Every row of @tab-synthesis-cost whose expansion contains a loop is
     understated 2-4x. Measured at HEAD by differencing one-call against

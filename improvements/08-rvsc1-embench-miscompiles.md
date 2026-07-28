@@ -1,8 +1,37 @@
 # Four Embench benchmarks miscompile under rvsc1 (segfault on Spike)
 
-> **STATUS: root cause found and fixed** in gcc `0b3abf309dd`, "riscv: reserve t0 as fixed
-> on !TARGET_AUIPC, like t1". `edn`, `sglib-combined`, `wikisort` and `nsichneu` all pass.
-> `qrduino` still fails and is now the only open part; see "Remaining: qrduino" at the end.
+> **STATUS: DONE.** Both defects found and fixed; all nineteen Embench benchmarks pass.
+>
+> **Second defect (`qrduino`), fixed in gcc `8a0646efee4`**, "riscv: make synthesized
+> sub-word word accesses alias anything". `qrduino` did not share the `t0` cause. Because
+> rvsc1 has no `sb`, a byte store becomes a read-modify-write of the enclosing word, but the
+> RTL still names only the byte. Alias analysis traced the aligned address through the `and`
+> with -4 to the object's own symbol, found two such stores had distinct base symbols,
+> concluded they could not conflict, and hoisted both word loads above both word stores --
+> true of the byte objects, false of the word containing them. `initecc` does
+> `VERSION = vers; WD = 17 + 4 * vers;` on adjacent `unsigned char` globals, so the second
+> store wrote back its stale copy of the first: `WD` correct, `VERSION` zero. `doaligns()`
+> then took its `if (VERSION < 2) return;` path and the alignment patterns were never drawn.
+>
+> Reduced to six lines, and not a `qrduino` bug at all -- it corrupts any program storing to
+> adjacent `char`/`short` globals:
+>
+> ```c
+> unsigned char A, B;
+> void f (unsigned char v) { A = v; B = 17 + 4 * v; }   /* A lost at -O2/-O3 */
+> ```
+>
+> Fixed by routing all nine synthesized word MEMs through
+> `riscv_subword_container_mem`, which sets alias set 0 and `MEM_VOLATILE_P`. Cost: a
+> synthesized sub-word access can no longer reuse a word its neighbour just loaded, which
+> shows up almost entirely in `statemate` (x59 -> x107 dynamic); static size unchanged in
+> geomean.
+>
+> Found by bisecting the encoder with checksum probes: output -> `fillframe` -> `initframe`
+> -> `doaligns` doing nothing -> `VERSION` reading 0 while `WD` read 25.
+>
+> **First defect (the segfaults), fixed** in gcc `0b3abf309dd`, "riscv: reserve t0 as fixed on
+> !TARGET_AUIPC, like t1". `edn`, `sglib-combined`, `wikisort` and `nsichneu` all pass.
 > The original investigation notes are kept below as written, since the diagnosis they
 > reached turned out to be correct.
 >
@@ -39,8 +68,20 @@
 > benchmarks that never crashed at all.
 >
 > Verified: ISA compliance 95/95, behavioral 30/30, `gcc.c-torture` static sweep 8150/8150
-> clean with 0 ICEs and 0 violations. @tbl-embench-size and @tbl-embench-perf re-measured
-> and updated; the geomean base rose from fourteen benchmarks to seventeen.
+> clean with 0 ICEs and 0 violations.
+>
+> **Combined verification after both fixes.** ISA compliance 95/95 (sc1) and 60/60 (sc0),
+> behavioral 30/30 (sc1) and 45/45 (sc0), static torture sweep 8150/8150 clean with 0 ICEs
+> and 0 violations, and the full gcc.c-torture execute suite at 8145/8420 with **2 failures,
+> down from 36**. Both remaining failures were `20030125-1.c` at -O1/-Os, which upstream
+> guards with `dg-require-effective-target c99_runtime`; this target has no C99 math runtime,
+> so GCC correctly declines to narrow `floor`->`floorf` and the test's own weak `floor`
+> aborts. The harness reads `dg-options` but does not parse `dg-require-effective-target`, so
+> the test is now listed in `KNOWN_UNSUPPORTED` alongside the other inapplicable ones,
+> making the suite 8142/8420 with 278 skipped and 0 failed. @tbl-embench-size and
+> @tbl-embench-perf re-measured; the geomean base rose from fourteen benchmarks to eighteen,
+> the only excluded one being `wikisort`, which has no rvsc2 baseline because that
+> configuration does not link.
 
 Found while re-measuring for `improvements/05-remeasure-embench-after-unroll.md`, with the
 backend at `16de133341e`. This is a code defect, not a documentation one — the only item in
@@ -128,10 +169,14 @@ This is the same defect the thesis already describes for the torture harness at
 main.typ:1470 — a measurement tool that cannot distinguish a failure from a result hides
 defects in the code it is measuring.
 
-## Remaining: qrduino
+## Remaining: qrduino  [RESOLVED -- see STATUS at the top]
 
 The one benchmark the `t0` fix did not resolve. It no longer segfaults; it now runs to
 completion and fails its own output check, which is a different and narrower defect.
+The investigation notes below are kept as written; the answer turned out to be the sub-word
+store aliasing gap, and every observation here is consistent with it -- in particular the
+layout sensitivity, which was really sensitivity to whether two `char` globals landed in the
+same word.
 
 What is established:
 

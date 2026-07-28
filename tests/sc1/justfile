@@ -4,7 +4,7 @@ import "../common.just"
 
 default: test
 
-# ISA compliance: compile → assemble → disassemble → check allowlist
+# ISA compliance: compile → disassemble → check allowlist
 test:
     PATH="{{prefix}}/bin:$PATH" python3 main.py
 
@@ -12,7 +12,7 @@ test:
 test-one file:
     PATH="{{prefix}}/bin:$PATH" python3 main.py {{file}}
 
-# ISA compliance over gcc.c-torture/execute (skips tests that fail to compile)
+# ISA compliance over gcc.c-torture/execute (ICEs fail the run; other compile failures are grouped and skipped)
 torture-isa:
     PATH="{{prefix}}/bin:$PATH" python3 torture_isa.py
 
@@ -20,7 +20,7 @@ torture-isa:
 torture-behav:
     PATH="{{prefix}}/bin:$PATH" python3 torture_behav.py
 
-# Behavioral differential: compile with sc1 + reference, run both on Spike, compare exit codes
+# Behavioral: compile self-validating tests with sc1, run on Spike via pk (exit 0 = pass)
 behav:
     PATH="{{prefix}}/bin:$PATH" python3 behav.py
 

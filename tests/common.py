@@ -1,7 +1,11 @@
 """Shared utilities for rvscN ISA compliance validation and behavioral testing."""
 
+import dataclasses
+import enum
+import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -61,37 +65,177 @@ def compile_to_obj(compiler: str, src: Path, opt: str, cflags: list[str]) -> Pat
     return o
 
 
-def try_compile_to_obj(
+# ── compile outcome classification ─────────────────────────────────────────
+
+class CompileStatus(enum.Enum):
+    """How a compile attempt ended.
+
+    ICE is deliberately distinct from ERROR: an ICE is a backend bug worth
+    fixing, while an ERROR is nearly always an unsupported language feature or
+    a build/link configuration gap.  Folding the two into one silent "skip"
+    bucket is how the *branch<mode>_slt_synth crashes stayed invisible until
+    they were tripped over by hand.
+    """
+    OK = "ok"
+    ICE = "ice"
+    ERROR = "error"
+    TIMEOUT = "timeout"
+
+
+# An ICE announces itself with one of these.  "during RTL pass:" is not in the
+# list on purpose -- gcc prints it above ordinary hard errors too, so matching
+# it would classify unsupported-feature diagnostics as compiler crashes.
+_ICE_RE = re.compile(
+    r"internal compiler error:"
+    r"|could not split insn"
+    r"|unrecognizable insn"
+    r"|in verify_\w+, at "
+)
+_ICE_MSG_RE  = re.compile(r"internal compiler error:\s*(.+)")
+_ICE_ALT_RE  = re.compile(r"error:\s*(could not split insn|unrecognizable insn)")
+_ICE_PASS_RE = re.compile(r"during (\w+) pass:\s*(\S+)")
+_DIAG_RE     = re.compile(r"\b(?:fatal error|error):\s*(.+)")
+
+
+def ice_signature(stderr: str) -> str:
+    """Collapse an ICE report to a one-line key that groups by root cause.
+
+    "…: internal compiler error: in patch_jump_insn, at cfgrtl.cc:1360"
+      → "in patch_jump_insn, at cfgrtl.cc:1360 [during RTL pass: jump2]"
+
+    Grouping matters because one backend bug typically fires across dozens of
+    (test, opt-level) pairs; the signature is what makes that one line instead
+    of dozens.
+    """
+    m = _ICE_MSG_RE.search(stderr) or _ICE_ALT_RE.search(stderr)
+    sig = m.group(1).strip() if m else "unknown ICE"
+    p = _ICE_PASS_RE.search(stderr)
+    if p:
+        sig += f" [during {p.group(1)} pass: {p.group(2)}]"
+    return sig
+
+
+def error_signature(stderr: str) -> str:
+    """First diagnostic of an ordinary compile error, as a grouping key."""
+    m = _DIAG_RE.search(stderr)
+    return m.group(1).strip() if m else "(no diagnostic)"
+
+
+def classify_compile(returncode: int | None, stderr: str) -> CompileStatus:
+    """Map a finished compiler process onto a CompileStatus."""
+    if returncode == 0:
+        return CompileStatus.OK
+    # gcc exits 1 for ordinary diagnostics; death by signal (negative) or any
+    # other code means it fell over rather than rejecting the program.
+    crashed = returncode is not None and (returncode < 0 or returncode > 1)
+    if _ICE_RE.search(stderr) or crashed:
+        return CompileStatus.ICE
+    return CompileStatus.ERROR
+
+
+@dataclasses.dataclass(frozen=True)
+class CompileResult:
+    status: CompileStatus
+    stderr: str = ""
+    returncode: int | None = None
+    obj: Path | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.status is CompileStatus.OK
+
+    @property
+    def signature(self) -> str:
+        """Grouping key appropriate to this result's status."""
+        if self.status is CompileStatus.ICE:
+            return ice_signature(self.stderr)
+        if self.status is CompileStatus.ERROR:
+            return error_signature(self.stderr)
+        if self.status is CompileStatus.TIMEOUT:
+            return "compiler did not finish within the timeout"
+        return "compiled cleanly"
+
+
+def run_compiler(cmd: list[str], timeout: int) -> CompileResult:
+    """Run a compiler command to completion and classify how it ended.
+
+    Uses communicate() rather than wait(): with stdout/stderr as pipes, a
+    compiler that emits more than the ~64 KB pipe buffer blocks on write and
+    never exits, so wait() would report a hang.  An ICE dumps the offending
+    RTL insn and routinely clears that threshold, which made exactly the
+    interesting case look like a timeout.
+
+    The child gets its own process group so a genuine hang can be killed along
+    with whatever it spawned (cc1, as, ld).
+    """
+    try:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, errors="replace", start_new_session=True,
+        )
+    except OSError as e:
+        return CompileResult(CompileStatus.ERROR, f"error: cannot run compiler: {e}")
+    try:
+        _, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        _, stderr = proc.communicate()
+        return CompileResult(CompileStatus.TIMEOUT, stderr or "")
+    return CompileResult(classify_compile(proc.returncode, stderr), stderr, proc.returncode)
+
+
+def print_grouped(
+    title: str,
+    entries: list[tuple[str, str, str]],
+    limit: int | None = None,
+) -> None:
+    """Print a report section of (source name, opt level, signature) entries.
+
+    Entries are grouped by signature and ranked most frequent first, because a
+    single backend bug typically fires across dozens of (test, opt) pairs and
+    is far more actionable as one line than as dozens.  Nothing is printed for
+    an empty section.
+    """
+    if not entries:
+        return
+    groups: dict[str, dict[str, list[str]]] = {}
+    for name, opt, sig in entries:
+        groups.setdefault(sig, {}).setdefault(name, []).append(opt)
+
+    print(f"\n── {title} — {len(entries)} across {len(groups)} distinct ──")
+    ranked = sorted(groups.items(),
+                    key=lambda kv: -sum(len(v) for v in kv[1].values()))
+    for sig, srcs in ranked:
+        count = sum(len(v) for v in srcs.values())
+        print(f"  {sig}  ({count})")
+        shown = sorted(srcs.items())
+        for name, opts in shown[:limit]:
+            print(f"      {name}  {' '.join(sorted(opts))}")
+        if limit is not None and len(shown) > limit:
+            print(f"      … and {len(shown) - limit} more files")
+
+
+def compile_probe(
     compiler: str,
     src: Path,
     opt: str,
     cflags: list[str],
     timeout: int = 120,
-) -> Path | None:
-    """Like compile_to_obj but returns None on failure or timeout instead of exiting."""
-    import os
-    import signal
+) -> CompileResult:
+    """Compile src to a temporary object, classifying the outcome.
+
+    On success the caller owns result.obj and is responsible for unlinking it;
+    on any failure the object is already cleaned up.
+    """
     o = Path(tempfile.mktemp(suffix=".o"))
-    try:
-        proc = subprocess.Popen(
-            [compiler, "-c", opt, "-ffreestanding", *cflags, "-o", str(o), str(src)],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            start_new_session=True,
-        )
-        try:
-            proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-            proc.wait()
-            o.unlink(missing_ok=True)
-            return None
-        if proc.returncode != 0:
-            o.unlink(missing_ok=True)
-            return None
-        return o
-    except Exception:
-        o.unlink(missing_ok=True)
-        return None
+    res = run_compiler(
+        [compiler, "-c", opt, "-ffreestanding", *cflags, "-o", str(o), str(src)],
+        timeout,
+    )
+    if res.ok:
+        return dataclasses.replace(res, obj=o)
+    o.unlink(missing_ok=True)
+    return res
 
 
 def validate_source_direct(

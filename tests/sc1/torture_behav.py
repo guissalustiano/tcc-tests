@@ -15,15 +15,22 @@ import dataclasses
 import enum
 import os
 import re
-import signal
-import subprocess
 import sys
 import tempfile
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from common import find_tool, run_spike, SpikeTimeout
+from common import (
+    CompileResult,
+    CompileStatus,
+    find_tool,
+    print_grouped,
+    run_compiler,
+    run_spike,
+    SpikeTimeout,
+)
 
 SCRIPT_DIR  = Path(__file__).parent
 TORTURE_DIR = SCRIPT_DIR.parent.parent / "gcc" / "gcc" / "testsuite" / "gcc.c-torture" / "execute"
@@ -115,6 +122,16 @@ KNOWN_UNSUPPORTED: set[str] = {
     # for this target -- another build configuration gap, not ISA-related.
     "980709-1.c",
     "float-floor.c",
+    # Requires a C99 math runtime, which this target does not have; upstream
+    # guards it with "dg-require-effective-target c99_runtime", a directive
+    # this harness does not parse (it reads dg-options only). The test checks
+    # that GCC narrows sin(double)->sinf and floor(double)->floorf for float
+    # arguments, and defines weak floor/sinf that abort if the narrowing did
+    # not happen. Without a C99 runtime GCC correctly declines to narrow, so
+    # the weak floor runs and aborts at -O1 and -Os. At -O2/-O3 the calls are
+    # constant-folded away and it passes, and at -O0 the body is #ifdef'd out
+    # by __OPTIMIZE__ -- so the pass/fail split tracks folding, not synthesis.
+    "20030125-1.c",
     # sys/mman.h (mmap) unavailable on this freestanding/bare-metal newlib
     # target.
     "loop-2f.c",
@@ -125,8 +142,10 @@ KNOWN_UNSUPPORTED: set[str] = {
 class Outcome(enum.Enum):
     PASS = "pass"
     FAIL = "fail"
-    SKIP = "skip"
-    TIMEOUT = "timeout"
+    SKIP = "skip"          # compile/link rejected the program (a diagnostic)
+    ICE = "ice"            # the compiler itself fell over — a backend bug
+    CTIMEOUT = "ctimeout"  # the compiler hung
+    TIMEOUT = "timeout"    # spike hung
 
 
 @dataclasses.dataclass(frozen=True)
@@ -135,6 +154,11 @@ class Result:
     opt: str
     outcome: Outcome
     message: str | None = None
+    signature: str = ""
+
+
+def _section(title: str, results: list["Result"], limit: int | None = None) -> None:
+    print_grouped(title, [(r.src.name, r.opt, r.signature) for r in results], limit)
 
 
 def get_dg_options(src: Path) -> list[str]:
@@ -158,33 +182,32 @@ def get_dg_options(src: Path) -> list[str]:
 
 
 def try_compile_link(compiler: str, src: Path, opt: str, out: Path,
-                     extra_flags: list[str] | None = None) -> bool:
-    """Compile+link src → out ELF. Returns False on error or timeout."""
-    cmd = [compiler, opt] + (extra_flags or []) + ["-T", str(LD_SCRIPT), str(src), "-lsim", "-o", str(out)]
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        start_new_session=True,
-    )
-    try:
-        proc.wait(timeout=COMPILE_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        proc.wait()
+                     extra_flags: list[str] | None = None) -> CompileResult:
+    """Compile+link src → out ELF, classifying how the compiler ended."""
+    cmd = [compiler, opt] + (extra_flags or []) + [
+        "-T", str(LD_SCRIPT), str(src), "-lsim", "-o", str(out)
+    ]
+    res = run_compiler(cmd, COMPILE_TIMEOUT)
+    if not res.ok:
         out.unlink(missing_ok=True)
-        return False
-    if proc.returncode != 0:
-        out.unlink(missing_ok=True)
-        return False
-    return True
+    return res
+
+
+_COMPILE_OUTCOME = {
+    CompileStatus.ICE: Outcome.ICE,
+    CompileStatus.TIMEOUT: Outcome.CTIMEOUT,
+    CompileStatus.ERROR: Outcome.SKIP,
+}
 
 
 def run_one(compiler: str, pk: str, tmp: Path, src: Path, opt: str,
             dg_opts: list[str]) -> Result:
     """Compile+run one (src, opt) work item. Assumes KNOWN_SLOW already filtered."""
     elf = tmp / f"{src.stem}{opt}.elf"
-    if not try_compile_link(compiler, src, opt, elf, dg_opts):
-        return Result(src, opt, Outcome.SKIP)
+    built = try_compile_link(compiler, src, opt, elf, dg_opts)
+    if not built.ok:
+        return Result(src, opt, _COMPILE_OUTCOME[built.status],
+                      signature=built.signature)
     try:
         rc = run_spike(ISA, elf, timeout=SPIKE_TIMEOUT, pk=pk)
     except SpikeTimeout:
@@ -236,6 +259,7 @@ def main() -> None:
     skipped = total_pairs - len(items)
     passed = failed = 0
 
+    collected: list[Result] = []
     with tempfile.TemporaryDirectory() as _tmp:
         tmp = Path(_tmp)
         with ThreadPoolExecutor(max_workers=jobs) as pool:
@@ -245,16 +269,28 @@ def main() -> None:
                 items,
             )
             for result in results:
+                collected.append(result)
                 if result.outcome is Outcome.TIMEOUT:
                     print(f"  TIMEOUT {result.src.name} {result.opt}")
                     failed += 1
                 elif result.outcome is Outcome.FAIL:
                     print(f"  FAIL {result.src.name} {result.opt}  ({result.message})")
                     failed += 1
-                elif result.outcome is Outcome.SKIP:
+                elif result.outcome is Outcome.ICE:
+                    print(f"  ICE {result.src.name} {result.opt}: {result.signature}")
+                    failed += 1
+                elif result.outcome in (Outcome.SKIP, Outcome.CTIMEOUT):
                     skipped += 1
                 else:
                     passed += 1
+
+    by_outcome = defaultdict(list)
+    for r in collected:
+        by_outcome[r.outcome].append(r)
+
+    _section("ICEs", by_outcome[Outcome.ICE])
+    _section("Skipped — compile/link rejected", by_outcome[Outcome.SKIP], limit=8)
+    _section("Skipped — compiler hung", by_outcome[Outcome.CTIMEOUT], limit=8)
 
     total = passed + failed + skipped
     print(f"\n{passed}/{total} passed  ({skipped} skipped, {failed} failed)")

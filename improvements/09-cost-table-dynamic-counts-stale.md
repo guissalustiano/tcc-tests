@@ -1,5 +1,58 @@
 # `@tab-synthesis-cost`'s dynamic counts are stale by 2-4x on every looping row
 
+> **STATUS: DONE.** Every row re-measured against the current backend and the table updated.
+> The picture is more interesting than "understated 2-4x": the table was wrong in *both*
+> directions.
+>
+> | row | was | now | |
+> |---|---|---|---|
+> | `srl` (var) | ~170 | **477** | understated 2.8x |
+> | `sra` (var) | ~200 | **669** | understated 3.3x |
+> | `lb`/`lbu` | ~80 | **608** | understated 7.6x |
+> | `lh`/`lhu` | ~80 | **680** | understated 8.5x |
+> | `sb` | ~100 | **308** | understated 3.1x |
+> | `sh` | ~105 | **215** | understated 2.0x |
+> | `slt` | ~60 | **49** | overstated |
+> | `sltu` | ~70 | **48** | overstated |
+> | `blt`/`bltu` | ~75 | **27** | overstated 2.8x |
+> | `bge`/`bgeu` | ~75 | **28** | overstated 2.7x |
+>
+> The straight-line rows were all correct and are unchanged: `not` 2, `bne` 3, `jal` 5,
+> `sll` (const) exactly $b$, `sll` (var) 187 -- measured 187, an exact match, which is what
+> gave confidence in the method before trusting it on the rows that moved.
+>
+> **The constant-shift rows were also already right**, contrary to this task's premise:
+> `srl` (const) measures 158 against a published 159, and `sra` (const) 194 against 195.
+> They only look right if the operand is chosen correctly, which is the first of two traps.
+>
+> **Trap 1: the worst case depends on the data, not just the shift amount.** Each bit
+> position is a conditional merge, so `srl` by 1 costs 158 instructions on an all-ones
+> operand and 127 on zero. Measuring with an arbitrary value like `0x87654321` gives 139 and
+> quietly understates the row.
+>
+> **Trap 2: sub-word loads are worst when *aligned*.** `lb` costs 608 instructions at offset
+> 0 and 389 at offset 3, because the extraction shift gets cheaper as the offset grows. Any
+> measurement that picks a "worst-case misaligned" address gets the wrong end of the range.
+> This is why the earlier spot-check in improvements/06 reported 321 rather than 608: it
+> scanned offsets but with a zero-filled buffer, so the data-dependence of trap 1 was
+> invisible.
+>
+> **Method.** Call a one-operation function in a loop, difference the retired-instruction
+> count between trip counts of 100 and 200, divide by 100. The loop and call overhead cancels
+> exactly, and the per-iteration figure is exact rather than noisy. An earlier attempt
+> differencing one call against two was useless -- the operations are pure, so with literal
+> arguments GCC folds them into the caller or CSEs the second call away, giving deltas of
+> zero and negative numbers. Operands must come from `volatile` storage and the function
+> needs `noinline,noipa`. The harness is in the session scratchpad; it is small enough to
+> rewrite but the two traps above are worth keeping.
+>
+> **rvsc0 is not covered.** It has no `jalr`, so there is no call to difference, and its
+> costs genuinely differ in both directions: the loop back-edge is one `beq zero,zero`
+> against rvsc1's three-instruction `lui`/`addi`/`jr`, while every wide constant costs an
+> `addi`/shift construction instead of `lui`+`addi`. For `sh` that nets to 176 on rvsc0
+> against 216 on rvsc1. The table now states that its figures are rvsc1 and explains the
+> asymmetry rather than implying one number covers both.
+
 Found while doing `improvements/06-cost-table-and-sh-mask-corrections.md`, which asked only
 whether the `sh` row still held for rvsc0. It does not hold for **rvsc1** either, and neither
 does any other row whose expansion contains a loop.

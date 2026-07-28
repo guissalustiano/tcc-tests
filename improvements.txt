@@ -7,10 +7,11 @@ Items 1-7 were documentation defects: main.typ had drifted behind the backend
 across five commits. All are done. Items 8-11 are not documentation and were
 found by doing 5 and 6 -- re-measuring and re-deriving turned up real code
 defects and gaps in what the test suites cover, each of which uncovered the next.
-Items 8 and 10 are done: 8 was two independent backend miscompiles, 10 was
-hand-written libgcc assembly bypassing the ISA restrictions. Item 9 (cost-table
-figures understated 2-4x) and item 11 (the linked program is not ISA-clean, even
-though every compiled object is) are open.
+Items 8, 9 and 10 are done: 8 was two independent backend miscompiles, 9 found
+the cost table wrong in both directions rather than merely understated, and 10
+was hand-written libgcc assembly bypassing the ISA restrictions entirely.
+Item 11 -- the linked program is not ISA-clean, even though every compiled object
+is -- is the only one still open.
 
 Suggested order (contradictions first, then arithmetic, then polish):
 
@@ -277,22 +278,47 @@ Suggested order (contradictions first, then arithmetic, then polish):
     x7.13, captions cite 8a0646efee4. The §Discussion and §Results Summary
     correctness qualifications added when the crashes were found are now
     resolved rather than narrowed, since nothing is left failing.
- 9. improvements/09-cost-table-dynamic-counts-stale.md   [NEW -- found by item 6]
-    Every row of @tab-synthesis-cost whose expansion contains a loop is
-    understated 2-4x. Measured at HEAD by differencing one-call against
-    two-call programs on Spike: sb 295 (table ~100), sh ~200 (~105), lb/lbu
-    321 (~80), lh/lhu 340/337 (~80); a hand-count of test_sh (216) corroborates
-    the dynamic figure. Probable cause is the !TARGET_AUIPC back edge, 3
-    instructions (lui/addi/jr) where a plain j is 1, paid every iteration of
-    every synthesis loop. The offset scan also shows stores and loads have
-    opposite worst cases -- a load is worst when *aligned*, because the SRL
-    extraction loop gets cheaper as the shift grows (shr1=159 vs shr31=39) --
-    so the table cannot be spot-checked at a single offset. Remaining looping
-    rows (sll/srl/sra var, slt, sltu, blt, bge, rvsc0 lui) unmeasured and
-    presumed equally stale; the straight-line rows are fine. rvsc0 needs
-    analytic counting instead of differencing, since with no jalr there is no
-    call to difference.
+ 9. [done] improvements/09-cost-table-dynamic-counts-stale.md
+    Every row re-measured against the current backend; @tab-synthesis-cost and
+    the surrounding prose updated. The table was wrong in BOTH directions, not
+    just understated:
 
+      srl (var)   ~170 -> 477     sra (var)   ~200 -> 669
+      lb/lbu      ~80  -> 608     lh/lhu      ~80  -> 680
+      sb          ~100 -> 308     sh          ~105 -> 215
+      slt         ~60  -> 49      sltu        ~70  -> 48
+      blt/bltu    ~75  -> 27      bge/bgeu    ~75  -> 28
+
+    The straight-line rows were all already correct and are unchanged (not 2,
+    bne 3, jal 5, sll const exactly b, sll var 187 -- measured 187 exactly,
+    which is what justified trusting the method on the rows that moved). The
+    constant-shift rows were correct too, contrary to this task's premise: srl
+    const measures 158 against a published 159, sra const 194 against 195.
+
+    Two traps, both of which had produced wrong spot-checks earlier:
+
+    (1) The worst case depends on the DATA, not just the shift amount -- each
+    bit position is a conditional merge, so srl by 1 costs 158 on an all-ones
+    operand and 127 on zero. The measurement in item 6 used 0x87654321 and a
+    zero-filled buffer, which is why it reported lb as 321 rather than 608.
+
+    (2) Sub-word loads are worst when ALIGNED (lb: 608 at offset 0, 389 at
+    offset 3), because the extraction shift gets cheaper as the offset grows.
+    Picking a "worst-case misaligned" address gets the wrong end of the range.
+
+    Method: call a one-operation function in a loop and difference the retired
+    count between trip counts of 100 and 200. Loop and call overhead cancel
+    exactly. Differencing one call against two -- the item 6 approach -- is
+    useless here: the operations are pure, so with literal arguments GCC folds
+    them into the caller or CSEs the second call away, giving deltas of zero and
+    negative numbers. Operands must be volatile and the function noinline,noipa.
+
+    rvsc0 is explicitly not covered: no jalr means no call to difference, and
+    its costs differ in both directions (back edge 1 instruction vs 3, but wide
+    constants cost an addi/shift construction instead of lui+addi -- for sh,
+    176 on rvsc0 against 216 on rvsc1). The table now states that its figures
+    are rvsc1 and explains the asymmetry instead of implying one number covers
+    both targets.
 10. [done] improvements/10-libgcc-asm-violates-sc1-isa.md
     Fixed in gcc f2e7bfaecbb. libgcc.a for rvsc0 and rvsc1 now contains zero
     shift instructions.

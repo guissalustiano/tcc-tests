@@ -44,7 +44,8 @@ Suggested order (contradictions first, then arithmetic, then polish):
     (1x5), and printf/libm correctly do not appear there because they compile
     fine and only fail at link. The -O0 trio sentence was kept verbatim, so
     item 07 part 4 (naming the three sources and showing the mechanism rather
-    than asserting it) is still open. typst compile clean.
+    than asserting it) was left open here; it is now done under item 7.
+    typst compile clean.
 
  3. [done] improvements/03-remove-false-differential-claims.md
     Took the "stop claiming it" resolution: no reference RV32I build exists, so
@@ -187,11 +188,34 @@ Suggested order (contradictions first, then arithmetic, then polish):
     -O0/-O1/-O2/-Os, so one of the 07-26 fixes cured it; nothing to report
     beyond the reminder that a stale install can manufacture phantom bugs.
 
- 7. improvements/07-results-chapter-small-corrections.md
-    Copy-level: `sub x0, rs` missing its destination (twice), the same
-    illustration using rvsc3 in one place and rvsc2 in another, appendix listing
-    lengths off by one (181/216, not 182/217), and an unverified claim about the
-    three -O0-only skips.
+ 7. [done] improvements/07-results-chapter-small-corrections.md
+    All four parts done; the only one needing work was part 4.
+
+    Part 1: `sub x0, rs` -> `sub rd, x0, rs` in both ISA-test tables, matching
+    the §6 derivation at main.typ:794 and the one_cmplsi2 expand.
+
+    Part 2: the pedagogical illustration now says rvsc2 in both places, per the
+    task's reasoning that rvsc2 is the native baseline the Embench tables
+    actually use and rvsc3 differs only by fence.
+
+    Part 3: re-measured rather than copied -- 181 lines / 151 instructions for
+    shr3, 216 / 185 for sra3, confirming the task's figures. Rather than just
+    swapping the numbers, the text now states the counting boundary ("from the
+    `shr3:` label through its `ret`") and gives both counts, since the sentence
+    presents the command as reproducible and the old numbers were off precisely
+    because the boundary was unstated.
+
+    Part 4 (the one that was actually open): the three -O0-only sources are
+    20030626-1.c, 20030626-2.c and 960327-1.c. Found by taking every torture
+    source that calls a printf-family function but is not in KNOWN_UNSUPPORTED
+    (9 candidates) and linking each at all five levels; exactly those three fail
+    at -O0 and link at -O1..-Os, which matches the 54 -> 57 step. The mechanism
+    is constant folding, now shown rather than asserted: each calls sprintf with
+    a literal format and no varying conversion, and `sprintf` is referenced in
+    the -O0 assembly and absent from the -O1 assembly, replaced by inline
+    stores. It is specifically not dead-code elimination -- 20030626-1.c tests
+    the length sprintf returns, so the call cannot merely be discarded. The
+    prose now names all three and says so.
 
  8. improvements/08-rvsc1-embench-miscompiles.md   [NEW -- found by item 5]
     The only code defect in this backlog; everything else is documentation.

@@ -1325,7 +1325,7 @@ The rvsc0 corpus contains 12 programs, listed by operation category in @tbl-sc0-
     [Halfword load], [LH signed/unsigned — synthesized via `lw`+shift+mask],
     [Logic],        [AND, OR (native); XOR via `(a|b)-(a&b)`; ANDI/ORI via `li`+register-op],
     [Large constants], [LUI — synthesized via addi/add (10-bit split + shifts, no lui or memory access)],
-    [Bitwise NOT],  [NOT — synthesized as `sub x0, rs; addi rd, rd, -1`],
+    [Bitwise NOT],  [NOT — synthesized as `sub rd, x0, rs; addi rd, rd, -1`],
     [Byte store],   [SB — synthesized via `lw`+clear+insert+`sw`],
     [Shifts],       [SLL, SRL, SRA with constant and variable shift counts],
     [Comparisons],  [SLT and SLTU — synthesized via sub/xor/and/lshr chains],
@@ -1390,7 +1390,7 @@ The rvsc1 corpus contains 19 programs, listed by operation category in @tbl-sc1-
     [Signed halfword load], [LH — synthesized via `lw`+shift+sign-extend],
     [Unsigned halfword load], [LHU — synthesized via `lw`+shift+mask],
     [Loop],         [Loop with synthesized branch and variable shift],
-    [Bitwise NOT],  [NOT — synthesized as `sub x0, rs; addi rd, rd, -1`],
+    [Bitwise NOT],  [NOT — synthesized as `sub rd, x0, rs; addi rd, rd, -1`],
     [Immediate OR], [ORI — synthesized as `li t, imm; or rd, rs, t`],
     [Byte store],   [SB — synthesized via `lw`+clear+insert+`sw`],
     [Halfword store], [SH — synthesized via `lw`+clear+insert+`sw`],
@@ -1465,7 +1465,7 @@ The full suite covers 1 684 × 5 = 8 420 compiler+optimizer combinations. @tbl-t
   caption: [Torture-suite sources excluded at every optimization level, by cause],
 ) <tbl-torture-skips>
 
-The two runtime-library categories, which together account for 42 of the 54, are both build configuration gaps rather than compiler or ISA issues. The linked newlib `libc.a`'s stdio wrappers (`printf`, `sprintf`, `fprintf`, and the `_chk`/`v`-prefixed variants) call internal reentrant symbols (`_vfprintf_r`, `_svfprintf_r`, `_vfiprintf_r`) that this newlib build never defines, so any test calling a `printf`-family function fails to link; likewise, no libm is built for this target, so the two tests calling `pow` and `floor` fail on the same kind of undefined reference. Three further sources hit the `printf` gap only at `-O0`, where the unoptimized `sprintf` call survives to link time — which is what raises that row of @tbl-torture-results to 57; at higher optimization levels GCC eliminates or transforms the call before it reaches the linker.
+The two runtime-library categories, which together account for 42 of the 54, are both build configuration gaps rather than compiler or ISA issues. The linked newlib `libc.a`'s stdio wrappers (`printf`, `sprintf`, `fprintf`, and the `_chk`/`v`-prefixed variants) call internal reentrant symbols (`_vfprintf_r`, `_svfprintf_r`, `_vfiprintf_r`) that this newlib build never defines, so any test calling a `printf`-family function fails to link; likewise, no libm is built for this target, so the two tests calling `pow` and `floor` fail on the same kind of undefined reference. Three further sources --- `20030626-1.c`, `20030626-2.c` and `960327-1.c` --- hit the `printf` gap only at `-O0`, which is what raises that row of @tbl-torture-results to 57. Each calls `sprintf` with a literal format string and no varying conversion, so from `-O1` onwards GCC folds the call into the stores it is equivalent to and no reference to `sprintf` survives to be linked; at `-O0` the call remains and fails on the same undefined `_svfprintf_r`. The transformation is constant folding rather than dead-code elimination, as `20030626-1.c` tests the length `sprintf` returns and so cannot simply have the call discarded.
 
 An earlier revision of this suite reported 31 cases that appeared to time out at the 300-second Spike budget, attributed to shift-synthesis overhead. Root-causing them instead found a genuine backend correctness bug: for `!TARGET_AUIPC`, both the long-branch/jump synthesis and the call-address materialization used the same scratch register (`t1`) without declaring it clobbered, so an optimizer could leave a call executing with a stale register value pointing at a nearby loop instead of the intended callee — and, more subtly, the same missing declaration let IRA allocate an *unrelated* live value (e.g. a loaded word inside the byte/half-word store synthesis) to a register that a nearby shift-synthesis loop's back edge silently destroyed. Both were genuine miscompilations, not slow-but-correct code, and were confirmed via direct instruction-level tracing (`spike --log-commits`) on `920302-1.c` and `pr93249.c`, where a call or a merge step ended up executing with corrupted register/memory state. Fixing the register-clobber declarations resolved all 31 original cases with zero regressions (95/95 ISA compliance, 30/30 behavioral).
 
@@ -1581,7 +1581,7 @@ The results establish correctness first and cost second. On the correctness axis
 
 The cost of that re-expression is quantified along two dimensions. Statically, synthesis inflates code size by a mean of #sym.times 7.13 over the Embench suite (@tbl-embench-size), dynamically, it inflates the retired-instruction count by a mean of #sym.times 15.5 over the benchmarks that complete (@tbl-embench-perf). The dynamic penalty is the larger of the two because the costliest syntheses of the variable-count shift loops, each of which re-materializes its own back-edge every iteration (@sc1-sll), tend to sit inside the hottest loops, so their cost is multiplied by trip count rather than merely by static occurrence. Both penalties vary by more than an order of magnitude across workloads, from near-parity for multiply--add-dominated code (`matmult-int`, `ud`) to two orders of magnitude for shift- and comparison-heavy code (`xgboost`, `statemate`).
 
-For the pedagogical setting these targets are built for, this variation is the point rather than a limitation. The programs students write in an introductory single-cycle course, small loops, modest shift amounts, few byte-granular memory accesses, fall at the inexpensive end of both distributions, so the toolchain remains practical to use. At the same time, the wide spread makes the cost of each ISA restriction concrete and measurable: a student can compile the same source for rvsc1 and rvsc3, compare the `-S` output, and see exactly how many native instructions a single missing `sll` or `sb` expands into. The compiler thus turns an abstract statement about instruction-set design --- "omitting an instruction shifts its cost into software" --- into a number the student can read off the assembly.
+For the pedagogical setting these targets are built for, this variation is the point rather than a limitation. The programs students write in an introductory single-cycle course, small loops, modest shift amounts, few byte-granular memory accesses, fall at the inexpensive end of both distributions, so the toolchain remains practical to use. At the same time, the wide spread makes the cost of each ISA restriction concrete and measurable: a student can compile the same source for rvsc1 and rvsc2, compare the `-S` output, and see exactly how many native instructions a single missing `sll` or `sb` expands into. The compiler thus turns an abstract statement about instruction-set design --- "omitting an instruction shifts its cost into software" --- into a number the student can read off the assembly.
 
 = Conclusion <ch-conclusion>
 
@@ -1715,7 +1715,7 @@ done:
 
 == SRL Synthesis Assembly (Constant Count) <apx-srl-const-asm>
 
-Real compiler output for `shr3` from `tests/sc1/tests/isa/srl.c` (`x >> 3`, so $s=3$, giving $32-3=29$ unrolled extraction steps). The full 182-line listing is reproducible via `rvsc1-unknown-elf-gcc -S -O1 tests/sc1/tests/isa/srl.c`; the excerpt below shows the setup, the first two extraction steps, and the last, with the identical repeated block elided:
+Real compiler output for `shr3` from `tests/sc1/tests/isa/srl.c` (`x >> 3`, so $s=3$, giving $32-3=29$ unrolled extraction steps). The full listing runs to 181 lines, 151 of them instructions, counted from the `shr3:` label through its `ret`, and is reproducible via `rvsc1-unknown-elf-gcc -S -O1 tests/sc1/tests/isa/srl.c`; the excerpt below shows the setup, the first two extraction steps, and the last, with the identical repeated block elided:
 
 ```asm
 shr3:
@@ -1772,7 +1772,7 @@ done:
 
 == SRA Synthesis Assembly (Constant Count) <apx-sra-const-asm>
 
-Real compiler output for `sra3` from `tests/sc1/tests/isa/sra.c` (`x >> 3`, so $s=3$). The full 217-line listing is reproducible via `rvsc1-unknown-elf-gcc -S -O1 tests/sc1/tests/isa/sra.c`; the excerpt below shows the sign-bit setup, the first extraction step (identical in structure to @apx-srl-const-asm), the elided repeated block, and the unrolled `sign_mask` construction:
+Real compiler output for `sra3` from `tests/sc1/tests/isa/sra.c` (`x >> 3`, so $s=3$). The full listing runs to 216 lines, 185 of them instructions, counted from the `sra3:` label through its `ret`, and is reproducible via `rvsc1-unknown-elf-gcc -S -O1 tests/sc1/tests/isa/sra.c`; the excerpt below shows the sign-bit setup, the first extraction step (identical in structure to @apx-srl-const-asm), the elided repeated block, and the unrolled `sign_mask` construction:
 
 ```asm
 sra3:

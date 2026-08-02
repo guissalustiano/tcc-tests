@@ -203,7 +203,8 @@ def _section(title: str, results: list["Result"], limit: int | None = None) -> N
 
 
 def build_report(by_outcome: dict, passed: int, failed: int, skipped: int,
-                 sources: int, opts: list[str]) -> str:
+                 sources: int, opts: list[str],
+                 per_opt: dict[str, dict[str, int]] | None = None) -> str:
     """Render the persisted failure record.
 
     Deliberately carries no timestamp, no host name and no wall-clock timing:
@@ -214,6 +215,8 @@ def build_report(by_outcome: dict, passed: int, failed: int, skipped: int,
     compile-budget timeouts among them are load-sensitive, and listing them
     would make every run diff against every other for reasons unrelated to
     code generation.  torture_isa.py's grouped output covers them instead.
+    The per-optimization-level breakdown is recorded because the thesis
+    reports it as a table, and a bare total cannot be split back apart.
     """
     total = passed + failed + skipped
     lines = [
@@ -227,8 +230,21 @@ def build_report(by_outcome: dict, passed: int, failed: int, skipped: int,
         f" = {total} combinations",
         f"# {passed} passed · {failed} failed · {skipped} skipped"
         " (compile/link rejected or compiler hung; not listed here)",
-        "",
+        "#",
     ]
+    if per_opt:
+        lines += ["# opt    passed  skipped  failed", "#"]
+        for opt in opts:
+            row = per_opt.get(opt, {})
+            lines.append(
+                f"# {opt:<6} {row.get('passed', 0):>6} {row.get('skipped', 0):>8}"
+                f" {row.get('failed', 0):>7}"
+            )
+        lines.append(
+            f"# {'total':<6} {passed:>6} {skipped:>8} {failed:>7}"
+        )
+        lines.append("#")
+    lines.append("")
     sections = [
         ("ICEs", by_outcome.get(Outcome.ICE, [])),
         ("Runtime failures", by_outcome.get(Outcome.FAIL, [])),
@@ -345,11 +361,19 @@ def main() -> None:
     src_list = list(map(Path, sources))
     dg_opts_by_src = {src: get_dg_options(src) for src in src_list}
     total_pairs = len(src_list) * len(opts)
-    items = [(src, opt) for src in src_list for opt in opts
+    all_pairs = [(src, opt) for src in src_list for opt in opts]
+    items = [(src, opt) for src, opt in all_pairs
              if (src.name, opt) not in KNOWN_SLOW
              and src.name not in KNOWN_UNSUPPORTED]
     skipped = total_pairs - len(items)
     passed = failed = 0
+
+    # Per-opt tally, so the record can be read as the table the thesis prints.
+    # The up-front exclusions are attributed here; the rest accrue below.
+    per_opt = {opt: {"passed": 0, "skipped": 0, "failed": 0} for opt in opts}
+    for src, opt in all_pairs:
+        if (src.name, opt) in KNOWN_SLOW or src.name in KNOWN_UNSUPPORTED:
+            per_opt[opt]["skipped"] += 1
 
     collected: list[Result] = []
     with tempfile.TemporaryDirectory() as _tmp:
@@ -365,16 +389,21 @@ def main() -> None:
                 if result.outcome is Outcome.TIMEOUT:
                     print(f"  TIMEOUT {result.src.name} {result.opt}")
                     failed += 1
+                    per_opt[result.opt]["failed"] += 1
                 elif result.outcome is Outcome.FAIL:
                     print(f"  FAIL {result.src.name} {result.opt}  ({result.message})")
                     failed += 1
+                    per_opt[result.opt]["failed"] += 1
                 elif result.outcome is Outcome.ICE:
                     print(f"  ICE {result.src.name} {result.opt}: {result.signature}")
                     failed += 1
+                    per_opt[result.opt]["failed"] += 1
                 elif result.outcome in (Outcome.SKIP, Outcome.CTIMEOUT):
                     skipped += 1
+                    per_opt[result.opt]["skipped"] += 1
                 else:
                     passed += 1
+                    per_opt[result.opt]["passed"] += 1
 
     by_outcome = defaultdict(list)
     for r in collected:
@@ -401,7 +430,7 @@ def main() -> None:
               "(pass --report PATH to write one anyway)")
     if report is not None:
         report.write_text(build_report(by_outcome, passed, failed, skipped,
-                                       len(src_list), opts))
+                                       len(src_list), opts, per_opt))
         print(f"\nfailure record written to {report}")
 
     total = passed + failed + skipped

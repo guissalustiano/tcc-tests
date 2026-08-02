@@ -6,5 +6,15 @@
 #
 # 1684 sources × 5 opt levels (-O0 -O1 -O2 -O3 -Os) = 8420 combinations
 # 8142 passed · 0 failed · 278 skipped (compile/link rejected or compiler hung; not listed here)
+#
+# opt    passed  skipped  failed
+#
+# -O0      1626       58       0
+# -O1      1629       55       0
+# -O2      1629       55       0
+# -O3      1629       55       0
+# -Os      1629       55       0
+# total    8142      278       0
+#
 
 No failures.

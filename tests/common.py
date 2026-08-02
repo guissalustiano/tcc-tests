@@ -184,35 +184,50 @@ def run_compiler(cmd: list[str], timeout: int) -> CompileResult:
     return CompileResult(classify_compile(proc.returncode, stderr), stderr, proc.returncode)
 
 
+def format_grouped(
+    title: str,
+    entries: list[tuple[str, str, str]],
+    limit: int | None = None,
+) -> list[str]:
+    """Render a report section of (source name, opt level, signature) entries.
+
+    Entries are grouped by signature and ranked most frequent first, because a
+    single backend bug typically fires across dozens of (test, opt) pairs and
+    is far more actionable as one line than as dozens.  Ties are broken by
+    signature text and every inner list is sorted, so the same set of entries
+    always renders byte-identically -- that is what makes a persisted report
+    diffable between runs.  An empty section renders as no lines at all.
+    """
+    if not entries:
+        return []
+    groups: dict[str, dict[str, list[str]]] = {}
+    for name, opt, sig in entries:
+        groups.setdefault(sig, {}).setdefault(name, []).append(opt)
+
+    lines = [f"── {title} — {len(entries)} across {len(groups)} distinct ──"]
+    ranked = sorted(groups.items(),
+                    key=lambda kv: (-sum(len(v) for v in kv[1].values()), kv[0]))
+    for sig, srcs in ranked:
+        count = sum(len(v) for v in srcs.values())
+        lines.append(f"  {sig}  ({count})")
+        shown = sorted(srcs.items())
+        for name, opts in shown[:limit]:
+            lines.append(f"      {name}  {' '.join(sorted(opts))}")
+        if limit is not None and len(shown) > limit:
+            lines.append(f"      … and {len(shown) - limit} more files")
+    return lines
+
+
 def print_grouped(
     title: str,
     entries: list[tuple[str, str, str]],
     limit: int | None = None,
 ) -> None:
-    """Print a report section of (source name, opt level, signature) entries.
-
-    Entries are grouped by signature and ranked most frequent first, because a
-    single backend bug typically fires across dozens of (test, opt) pairs and
-    is far more actionable as one line than as dozens.  Nothing is printed for
-    an empty section.
-    """
-    if not entries:
-        return
-    groups: dict[str, dict[str, list[str]]] = {}
-    for name, opt, sig in entries:
-        groups.setdefault(sig, {}).setdefault(name, []).append(opt)
-
-    print(f"\n── {title} — {len(entries)} across {len(groups)} distinct ──")
-    ranked = sorted(groups.items(),
-                    key=lambda kv: -sum(len(v) for v in kv[1].values()))
-    for sig, srcs in ranked:
-        count = sum(len(v) for v in srcs.values())
-        print(f"  {sig}  ({count})")
-        shown = sorted(srcs.items())
-        for name, opts in shown[:limit]:
-            print(f"      {name}  {' '.join(sorted(opts))}")
-        if limit is not None and len(shown) > limit:
-            print(f"      … and {len(shown) - limit} more files")
+    """Print what format_grouped renders, preceded by a blank line."""
+    lines = format_grouped(title, entries, limit)
+    if lines:
+        print()
+        print("\n".join(lines))
 
 
 def compile_probe(
@@ -324,14 +339,33 @@ class SpikeTimeout(Exception):
     pass
 
 
-def run_spike(isa: str, elf: Path, timeout: int = 30, pk: str | None = None) -> int:
-    """Run spike and return the exit code. Pass pk= to run under the proxy kernel."""
+@dataclasses.dataclass(frozen=True)
+class SpikeRun:
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+def run_spike_capture(isa: str, elf: Path, timeout: int = 30,
+                      pk: str | None = None) -> SpikeRun:
+    """Run spike and return its exit code together with what it printed.
+
+    The output matters for failure triage: an aborting test, a pk trap report
+    and a bad syscall all surface as a nonzero exit code, and only the text
+    distinguishes them.
+    """
     cmd = ["spike", f"--isa={isa}"]
     if pk:
         cmd.append(pk)
     cmd.append(str(elf))
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return r.returncode
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           errors="replace", timeout=timeout)
     except subprocess.TimeoutExpired:
         raise SpikeTimeout(elf.name)
+    return SpikeRun(r.returncode, r.stdout or "", r.stderr or "")
+
+
+def run_spike(isa: str, elf: Path, timeout: int = 30, pk: str | None = None) -> int:
+    """Run spike and return the exit code. Pass pk= to run under the proxy kernel."""
+    return run_spike_capture(isa, elf, timeout, pk).returncode

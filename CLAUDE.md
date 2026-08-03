@@ -102,6 +102,22 @@ The `-M no-aliases` flag is essential — it expands pseudos like `ret` to `jalr
 
 sc0 has its own ISA tests in `tests/sc0/tests/isa/` (`arith.c`, `branch.c`, `lb.c`, `lh.c`, `logic.c`, `lui.c`, `not.c`, `sb.c`, `shift.c`, `slt.c`, `sra.c`, `srl.c`) and behavioral tests in `tests/sc0/tests/behav/`. sc2 follows the same `isa/` + `behav/` layout.
 
+### rvsc2 exclusion tests (`tests/sc2/reject.py`)
+
+```sh
+cd tests/sc2 && just reject   # or `just`, which runs `test` then `reject`
+```
+
+`main.py` only shows the compiler never *chooses* an excluded instruction. `reject.py` asks for each excluded group directly, via inline asm or a builtin, and pins down the three different treatments (10 probes × 5 opt levels = 50 cases):
+
+| Group | Expectation | Mechanism |
+|---|---|---|
+| `fence`, `fence.i` | no fence emitted | `-mno-fence` from `rvsc2.h`'s `CC1_SPEC` |
+| Zicsr `csr*` | **rejected** | arch string is `rv32i`, so the *assembler* refuses the mnemonic even from inline asm |
+| `ecall`, `ebreak` | accepted — **not** rejected | RV32I base mnemonics; `__builtin_trap` expands to `ebreak` |
+
+The ordering probes are each compiled a second time with `-mfence` and only pass if the fence appears then — a probe that quietly stopped generating fences would otherwise pass vacuously. (This caught a bad first probe: `asm volatile("" ::: "memory")` is a compiler barrier and never emits a hardware fence.) The `ecall`/`ebreak` cases assert the mnemonic *is* present: that group is a documented limitation in `main.typ`, and the test fails if the toolchain starts suppressing it, keeping document and behavior in step.
+
 ### Behavioral tests (`tests/behav/*.c` — rvsc1 only)
 
 Each `tests/behav/*.c` program is compiled and linked by `rvsc1-unknown-elf-gcc` at all five optimization levels against `pk32.ld` with `-lsim` (crt0 + libsim + libc), then executed under the RISC-V proxy kernel: `spike --isa=rv32imac_zicsr_zifencei $PK test.elf`. The tests are self-validating — they call `exit(0)` on success — so no reference compiler is involved; the test passes if Spike exits 0. `$PK` must be set (it is, inside the nix dev shell). The wide `--isa` string is what *pk itself* needs; the sc1 user binary still contains only sc1-subset instructions, which is verified separately by `main.py` and `torture_isa.py`.

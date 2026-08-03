@@ -118,3 +118,4 @@ main.pdf
 
 # Claude Code internal files
 .claude/
+.scratch/

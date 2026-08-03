@@ -2,11 +2,15 @@ target := "rvsc2-unknown-elf"
 
 import "../common.just"
 
-default: test
+default: test reject
 
 # Run all sc2 ISA compliance tests
 test:
     PATH="{{prefix}}/bin:$PATH" python3 main.py
+
+# Check how the three excluded instruction groups are actually treated
+reject:
+    PATH="{{prefix}}/bin:$PATH" python3 reject.py
 
 # Run a single source file
 test-one file:

@@ -71,7 +71,6 @@
 
 
 // --- Title Page (Folha de Rosto) [cite: 2221, 2795] ---
-  // --- Title Page (Folha de Rosto) [cite: 2221, 2795] ---
 #pagebreak()
 #{
   set page(numbering: none)
@@ -261,7 +260,6 @@ and software abstraction.
   [*GCC*],    [_GNU Compiler Collection_],
   [*GNU*],    [_GNU's Not Unix_],
   [*ISA*],    [_Instruction Set Architecture_],
-  [*PIC*],    [_Position-Independent Code_],
   [*RISC*],   [_Reduced Instruction Set Computer_],
   [*RTL*],    [_Register Transfer Language_],
   [*RV32I*],  [RISC-V, integers, 32 bits],
@@ -532,7 +530,7 @@ With these ten instructions, the target must support the full C calling conventi
 
 == rvsc2 — Single-Cycle Without Fence and Control
 
-The rvsc2 target implements the full RV32I base ISA with three groups of instructions excluded. Memory ordering instructions are unnecessary on a single-core single-cycle processor: omitting them is behavior-preserving. CSR access and system instructions require operating system support that is absent in the bare-metal environment.
+The rvsc2 target implements the full RV32I base ISA with three groups of instructions excluded. Memory ordering instructions (`fence`, and `fence.i` from Zifencei) are unnecessary on a single-core single-cycle processor: omitting them is behavior-preserving. CSR access (the Zicsr group) and the environment-call instructions `ecall` and `ebreak` require privileged or operating-system support that is absent from both the datapath and the bare-metal environment. Privileged instructions such as `sret`, `wfi` and `sfence.vma` are outside the base ISA being subset and are therefore not part of this specification at all; a processor that implements no privilege modes cannot omit them, having never offered them.
 
 #figure(
   table(
@@ -552,16 +550,23 @@ The rvsc2 target implements the full RV32I base ISA with three groups of instruc
 
 #figure(
   table(
-    columns: (auto, 1fr),
+    columns: (auto, auto, 1fr),
     align: left,
-    [*Treatment*], [*Instructions*],
-    [Behaviorally equivalent],
-      [`fence`, `fence.i`, `sfence.vma`],
-    [Rejected],
-      [`ecall`, `ebreak`, `sret`, `wfi`, CSR instructions (`csrrw`, `csrrs`, `csrrc`, `csrrwi`, `csrrsi`, `csrrci`)],
+    [*Group*], [*Instructions*], [*Treatment*],
+    [Memory ordering],
+      [`fence`, `fence.i`],
+      [Never emitted; omitting them is behavior-preserving],
+    [CSR access (Zicsr)],
+      [`csrrw`, `csrrs`, `csrrc`, `csrrwi`, `csrrsi`, `csrrci`],
+      [Rejected, including from inline assembly],
+    [Environment call],
+      [`ecall`, `ebreak`],
+      [Never emitted from portable C, but not rejected],
   ),
   caption: [rvsc2 instruction treatment],
-)
+) <tbl-rvsc2-treatment>
+
+The three treatments are not equally strong, and the distinction matters to what the target can be said to guarantee. Memory ordering is a compiler obligation: the backend is configured never to emit a fence, and portable C that would ordinarily produce one --- `__sync_synchronize`, a sequentially consistent or acquire/release atomic --- produces none. Zicsr is enforced by the toolchain as a whole rather than by the compiler alone: because the target's architecture string is `rv32i`, which does not include Zicsr, the assembler refuses a `csr` mnemonic even when a program writes one by hand in inline assembly. `ecall` and `ebreak` receive neither guarantee. They belong to the RV32I base, so the assembler accepts them from inline assembly, and `__builtin_trap` expands to `ebreak`; the requirement on them is therefore that no ordinary C program reaches them, not that the toolchain forbids them. @sc2-isa-tests tests all three.
 
 == rvsc3 — Single-Cycle rv32i
 
@@ -610,53 +615,62 @@ The rvsc5 target extends rvsc4 with the M extension, adding native integer multi
 
 The rvsc6 target extends rvsc5 with the complete F (single-precision) and D (double-precision) floating-point extensions as defined in @riscv-spec, supporting all arithmetic, memory, conversion, and comparison instructions for both precisions.
 
-Loads/stores:
-- `flw`, `fsw` — single precision
-- `fld`, `fsd` — double precision
-
-Arithmetic:
-- `fadd.s`, `fadd.d`, `fsub.s`, `fsub.d`, `fmul.s`, `fmul.d`, `fdiv.s`, `fdiv.d`, `fsqrt.s`, `fsqrt.d`
-
-Fused multiply-add:
-- `fmadd.s`, `fmadd.d`, `fmsub.s`, `fmsub.d`, `fnmadd.s`, `fnmadd.d`, `fnmsub.s`, `fnmsub.d`
-
-Sign, minimum, and maximum:
-- `fsgnj.s`, `fsgnj.d`, `fsgnjn.s`, `fsgnjn.d`, `fsgnjx.s`, `fsgnjx.d`
-- `fmin.s`, `fmin.d`, `fmax.s`, `fmax.d`
-
-Comparison and classification:
-- `feq.s`, `feq.d`, `flt.s`, `flt.d`, `fle.s`, `fle.d`
-- `fclass.s`, `fclass.d`
-
-Move between integer and FP registers:
-- `fmv.w.x`, `fmv.x.w` — single (rv32 and rv64)
-- `fmv.d.x`, `fmv.x.d` — double (rv64)
-
-Conversions (rv64):
-- `fcvt.s.w`, `fcvt.s.wu`, `fcvt.s.l`, `fcvt.s.lu` — int → single
-- `fcvt.w.s`, `fcvt.wu.s`, `fcvt.l.s`, `fcvt.lu.s` — single → int
-- `fcvt.d.w`, `fcvt.d.wu`, `fcvt.d.l`, `fcvt.d.lu` — int → double
-- `fcvt.w.d`, `fcvt.wu.d`, `fcvt.l.d`, `fcvt.lu.d` — double → int
-- `fcvt.s.d`, `fcvt.d.s` — conversion between single and double
+#figure(
+  table(
+    columns: (auto, 1fr),
+    align: left,
+    [*Group*], [*Instructions*],
+    [Loads and stores],
+      [`flw`, `fsw` (single); `fld`, `fsd` (double)],
+    [Arithmetic],
+      [`fadd.s`, `fadd.d`, `fsub.s`, `fsub.d`, `fmul.s`, `fmul.d`, `fdiv.s`, `fdiv.d`, `fsqrt.s`, `fsqrt.d`],
+    [Fused multiply-add],
+      [`fmadd.s`, `fmadd.d`, `fmsub.s`, `fmsub.d`, `fnmadd.s`, `fnmadd.d`, `fnmsub.s`, `fnmsub.d`],
+    [Sign injection],
+      [`fsgnj.s`, `fsgnj.d`, `fsgnjn.s`, `fsgnjn.d`, `fsgnjx.s`, `fsgnjx.d`],
+    [Minimum and maximum],
+      [`fmin.s`, `fmin.d`, `fmax.s`, `fmax.d`],
+    [Comparison and classification],
+      [`feq.s`, `feq.d`, `flt.s`, `flt.d`, `fle.s`, `fle.d`, `fclass.s`, `fclass.d`],
+    [Integer #sym.arrow.l.r FP register move],
+      [`fmv.w.x`, `fmv.x.w` (single, rv32 and rv64); `fmv.d.x`, `fmv.x.d` (double, rv64)],
+    [Integer #sym.arrow single],
+      [`fcvt.s.w`, `fcvt.s.wu`, `fcvt.s.l`, `fcvt.s.lu`],
+    [Single #sym.arrow integer],
+      [`fcvt.w.s`, `fcvt.wu.s`, `fcvt.l.s`, `fcvt.lu.s`],
+    [Integer #sym.arrow double],
+      [`fcvt.d.w`, `fcvt.d.wu`, `fcvt.d.l`, `fcvt.d.lu`],
+    [Double #sym.arrow integer],
+      [`fcvt.w.d`, `fcvt.wu.d`, `fcvt.l.d`, `fcvt.lu.d`],
+    [Single #sym.arrow.l.r double],
+      [`fcvt.s.d`, `fcvt.d.s`],
+  ),
+  caption: [rvsc6 floating-point instructions added to rvsc5 (F and D extensions; conversions to and from 64-bit integers are rv64 only)],
+)
 
 == rvsc7 — Single-Cycle Atomic
 
 The rvsc7 target extends rvsc6 with the A extension (atomic memory operations), implementing the full rv64imafd instruction set @riscv-spec. The `.w` variants operate on 32 bits (sign-extended to 64); the `.d` variants operate on 64 bits.
 
-Load-reserved and store-conditional:
-- `lr.w`, `lr.d` — load-reserved
-- `sc.w`, `sc.d` — store-conditional
-
-AMO (atomic memory operations):
-- `amoadd.w`, `amoadd.d` — atomic add
-- `amoand.w`, `amoand.d` — atomic AND
-- `amoor.w`, `amoor.d` — atomic OR
-- `amoxor.w`, `amoxor.d` — atomic XOR
-- `amoswap.w`, `amoswap.d` — atomic swap
-- `amomax.w`, `amomax.d` — atomic signed maximum
-- `amomaxu.w`, `amomaxu.d` — atomic unsigned maximum
-- `amomin.w`, `amomin.d` — atomic signed minimum
-- `amominu.w`, `amominu.d` — atomic unsigned minimum
+#figure(
+  table(
+    columns: (auto, 1fr),
+    align: left,
+    [*Instructions*], [*Operation*],
+    [`lr.w`, `lr.d`],           [Load-reserved],
+    [`sc.w`, `sc.d`],           [Store-conditional],
+    [`amoadd.w`, `amoadd.d`],   [Atomic add],
+    [`amoand.w`, `amoand.d`],   [Atomic AND],
+    [`amoor.w`, `amoor.d`],     [Atomic OR],
+    [`amoxor.w`, `amoxor.d`],   [Atomic XOR],
+    [`amoswap.w`, `amoswap.d`], [Atomic swap],
+    [`amomax.w`, `amomax.d`],   [Atomic signed maximum],
+    [`amomaxu.w`, `amomaxu.d`], [Atomic unsigned maximum],
+    [`amomin.w`, `amomin.d`],   [Atomic signed minimum],
+    [`amominu.w`, `amominu.d`], [Atomic unsigned minimum],
+  ),
+  caption: [rvsc7 atomic instructions added to rvsc6 (A extension)],
+)
 
 = Development <ch-development>
 
@@ -754,9 +768,9 @@ PATH="$(pwd)/../install/bin:$PATH" \
     --prefix=$(pwd)/../install \
     --enable-languages=c \
     --with-newlib \
-    --disable-binutils \   # do not rebuild binutils utilities from gcc tree
-    --disable-ld \         # do not rebuild linker from gcc tree
-    --disable-gas          # do not rebuild assembler from gcc tree
+    --disable-binutils \
+    --disable-ld \
+    --disable-gas
 
 make all-gcc -j$(nproc)
 make install-gcc
@@ -1317,7 +1331,7 @@ This long form is itself valid rvsc1 code, so correctness is preserved. However,
 
 == Tests
 
-Correctness is verified by three complementary test strategies: _ISA compliance_ tests, which statically check that the compiler never emits a forbidden instruction; _behavioral self-tests_, which execute compiled programs on a reference simulator and check their results; and the _GCC torture suite_, which subjects the compiler to a large corpus of programs accumulated by the GCC project itself. The synthesis-heavy targets are verified in depth: rvsc1 receives all three layers, and rvsc0 receives the first two (the torture suite requires function calls, which rvsc0 cannot compile). The first strategy is applied at two scopes --- to the objects the compiler emits and to the fully linked executable --- because, as @sc1-linked-isa shows, the two support different claims and only the narrower one belongs to the compiler. rvsc2 is covered by ISA compliance alone, and rvsc3 through rvsc7 require no testing beyond what the upstream backend already provides. This section first describes how each strategy works, then presents the specificities and results of each target.
+Correctness is verified by three complementary test strategies: _ISA compliance_ tests, which statically check that the compiler never emits a forbidden instruction; _behavioral self-tests_, which execute compiled programs on a reference simulator and check their results; and the _GCC torture suite_, which subjects the compiler to a large corpus of programs accumulated by the GCC project itself. The synthesis-heavy targets are verified in depth: rvsc1 receives all three layers, and rvsc0 receives the first two (the torture suite requires function calls, which rvsc0 cannot compile). The first strategy is applied at two scopes --- to the objects the compiler emits and to the fully linked executable --- because, as @sc1-linked-isa shows, the two support different claims and only the narrower one belongs to the compiler. rvsc2, which synthesizes nothing, is covered by ISA compliance plus a set of probes that ask directly for each excluded instruction group (@sc2-isa-tests); rvsc3 through rvsc7 require no testing beyond what the upstream backend already provides. This section first describes how each strategy works, then presents the specificities and results of each target.
 
 === Test Strategies
 
@@ -1536,7 +1550,13 @@ The summary is therefore two statements rather than one: everything this work co
 
 === rvsc2 <sc2-isa-tests>
 
-rvsc2 removes only `fence` (and `fence.i`) from RV32I, and nothing is synthesized: every instruction the compiler may emit is native. The only property left to verify is ISA compliance — that no fence instruction ever appears in the output. The rvsc1 test corpus is reused for this check, but against a much wider allowlist: the full RV32I base set minus the fence, CSR, and system instruction groups. The 19 programs at five optimization levels give 95 test cases; all pass, with neither `fence` nor `fence.i` appearing in any disassembly. No behavioral testing is required because the rvsc2 instruction set is otherwise identical to rvsc3 (full RV32I), whose correctness is already established by the upstream GCC test suite.
+rvsc2 removes three groups from RV32I --- memory ordering, CSR access, and the environment calls (@tbl-rvsc2-treatment) --- and synthesizes nothing: every instruction the compiler may emit is native. What is left to verify is therefore not equivalence but exclusion, and it is checked in two ways, because @tbl-rvsc2-treatment promises two different things.
+
+The first is ISA compliance, that the compiler never *chooses* an excluded instruction while compiling ordinary C. The rvsc1 test corpus is reused for this, but against a much wider allowlist: the full RV32I base set minus the three groups. The 19 programs at five optimization levels give 95 test cases; all pass, with no instruction from any excluded group appearing in any disassembly.
+
+The second checks what happens when a program asks for one *directly*, through inline assembly or a builtin --- the half of the requirement an allowlist sweep over ordinary C cannot reach. Ten probes at five optimization levels give 50 further cases, all passing, and they confirm the three treatments are genuinely different. Four ordering probes (`__sync_synchronize`, and sequentially consistent, acquire and release atomics) emit no fence; each is compiled a second time with `-mfence`, which restores the upstream behavior, and only counts as passing if the fence appears then --- otherwise a probe that had quietly stopped generating fences would report success while testing nothing. Four CSR probes, written as inline assembly so that the compiler's own choices are bypassed entirely, are all refused: the target's `rv32i` architecture string does not include Zicsr, so the assembler rejects the mnemonic. The last two probes record the limitation rather than a guarantee. `__builtin_trap` expands to `ebreak` and inline `ecall` assembles, so the test asserts that the mnemonic *is* present, and will fail if that ever changes --- which is what keeps @tbl-rvsc2-treatment honest about the one group the toolchain does not enforce.
+
+No behavioral testing is required, because on the instructions rvsc2 does emit it is identical to rvsc3 (full RV32I), whose correctness is already established by the upstream GCC test suite.
 
 === rvsc3 and Above
 
@@ -1994,7 +2014,10 @@ or    t1, t1, t2            # t1 = word with halfword inserted
 sw    t1, 0(t3)             # write back
 ```
 
-= References
-
-#bibliography("refs.bib", style: "ieee")
+// ABNT NBR 6023 author-date, matching the official Poli TCC LaTeX template
+// (tcc-latex/main.tex loads abntex2cite with the `alf` option).  The style is a
+// local copy of Typst's built-in `associacao-brasileira-de-normas-tecnicas` with
+// its fixed strings and month names translated to English, since the body of
+// this document is in English (see abnt-nbr6023-en.csl).
+#bibliography("refs.bib", title: [References], style: "abnt-nbr6023-en.csl")
 

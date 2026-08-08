@@ -176,13 +176,13 @@ Failures are grouped by root cause — ICE crash location, or the first diagnost
 
 `torture_isa.py` flags: `-j N` (parallel, defaults to `nproc`), `--opt=-O2` (repeatable — needs the `=` form, since argparse reads a bare `-O2` as a flag), `--include-unsupported` (also compile the `KNOWN_UNSUPPORTED` sources; they cannot link but can still reveal an ICE), `--files-per-group N`.
 
-A full `just torture-behav` sweep persists its failures to `tests/sc1/torture-behav-failures.txt`, which is committed. Runtime failures are grouped by a signature derived from how the program died — exit code or fatal signal, plus the first non-register-dump line pk/spike printed with addresses normalised to `<addr>` — so one fault reads as one entry. The file carries no timestamps and orders everything deterministically, so two sweeps of the same toolchain diff cleanly; compile-level skips are counted but not listed, since the compile-budget timeouts among them are load-sensitive and would churn the diff. The header also records a per-opt-level passed/skipped/failed breakdown, which is what `main.typ`'s `@tbl-torture-results` prints — a bare total cannot be split back apart. A partial run (explicit sources or `--opt`) does not overwrite the record; pass `--report PATH` to write elsewhere or `--no-report` to suppress it.
+A full `just torture-behav` sweep persists its failures to `tests/sc1/torture-behav-failures.txt`, which is committed. Runtime failures are grouped by a signature derived from how the program died — exit code or fatal signal, plus the first non-register-dump line pk/spike printed with addresses normalised to `<addr>` — so one fault reads as one entry. The file carries no timestamps and orders everything deterministically, so two sweeps of the same toolchain diff cleanly; compile-level skips are counted but not listed, since the compile-budget timeouts among them are load-sensitive and would churn the diff. `SPIKE_TIMEOUT` is deliberately generous (900 s) for the same reason: the slowest correct test, `memcpy-2.c` at `-O0`, retires 1.05e9 instructions and needs ~85 s of Spike alone, but the sweep runs many Spike instances at once, and at the previous 300 s budget it sat close enough to the line to flip between runs on load alone — producing a "failure" with no toolchain change behind it. The header also records a per-opt-level passed/skipped/failed breakdown, which is what `main.typ`'s `@tbl-torture-results` prints — a bare total cannot be split back apart. A partial run (explicit sources or `--opt`) does not overwrite the record; pass `--report PATH` to write elsewhere or `--no-report` to suppress it.
 
 `KNOWN_UNSUPPORTED` (in `torture_behav.py`, imported by `torture_isa.py`) excludes sources that fail for reasons unrelated to sc1: printf-family link gaps, libm, `sys/mman.h`, `_Decimal`, x87 asm, `__int128`, and five upstream "expensive" tests. Both scripts honor each test's `dg-options`; without them 115 programs fail on language dialect (mostly `-std=gnu89`) rather than on anything sc1-related.
 
-Last full static sweep (2026-07-26): 8368/8420 combinations compiled, **all ISA-clean, zero ICEs**. The 52 non-compiling are 35 front-end rejections (`__int128`, `sys/mman.h`, x87 asm, `_Decimal`) plus 17 compile-budget timeouts on the expensive tests. Timeout counts are load-sensitive; ICE and violation counts are not.
+Last full static sweep (2026-08-08): 8145 attempted, **8145 ISA-clean, zero ICEs, zero errors, zero timeouts**; the other 275 of the 8420 are the `KNOWN_UNSUPPORTED` exclusions (55 sources × 5), not attempted. Timeout counts are load-sensitive; ICE and violation counts are not.
 
-Last full behavioral sweep (2026-08-03): **8142/8420 passed, 0 failed**, 278 skipped (55 up-front exclusions × 5 levels, plus the three `sprintf` sources that only fail to link at `-O0`). These are the numbers `main.typ` reports.
+Last full behavioral sweep (2026-08-08): **8142/8420 passed, 0 failed**, 278 skipped (55 up-front exclusions × 5 levels, plus the three `sprintf` sources that only fail to link at `-O0`). These are the numbers `main.typ` reports.
 
 For quick manual checks:
 
@@ -262,6 +262,13 @@ The core of all instruction synthesis. Key patterns:
 - **`extend<SHORT:mode><SUPERQI:mode>2` expand** — when `!TARGET_BYTE` (QI) or `!TARGET_HALF` (HI) and MEM_P: synthesizes `lb`/`lh` like the unsigned forms but uses `ashr` for sign extension.
 - **`movhi` expand** — when `!TARGET_HALF && MEM_P(operands[0])`: synthesizes `sh` as read-modify-write: `addr&-4 → lw word → (addr&2)<<3 → mask 0xFFFF<<bit_off → word &= ~mask → val&0xFFFF<<bit_off → word |= val → sw`. Uses `gen_lowpart(SImode, force_reg(HImode, src))` for the value; the resulting paradoxical subreg is handled by the `*zero_extendhi<GPR:mode>2` split.
 - **`movqi` expand** — when `!TARGET_BYTE && MEM_P(operands[0])`: synthesizes `sb` identically but using byte mask `addr&3` and mask `0xFF`.
+- **Known-lane sub-word fast path** — all five expands above first call `riscv_subword_const_offset` (riscv.cc). When the object's position within its containing word is a compile-time constant, they take a specialized path (`riscv_emit_subword_load_const` / `riscv_emit_subword_store_const`) instead of the run-time one, and the whole `addr&3 → <<3 → variable shift` chain disappears. Details that matter:
+  - **Where the constant comes from.** `MEM_ALIGN` is only a *lower bound*, so it is usable in one direction only: ≥32 bits means offset 0. It cannot say "offset 2" — a MEM_ALIGN of 16 means 0 *or* 2. For non-zero lanes the residue comes from `get_object_alignment_1`, which returns M and N with `&EXPR ≡ N (mod M)`; when M ≥ 32 the residue mod a word is exactly N. `MEM_OFFSET` is added on, and an unknown `MEM_OFFSET` means bail. Getting this wrong is a miscompile (wrong word, or an unaligned `lw`), so every step is conservative.
+  - **Extraction is lane-dependent** because a right shift costs roughly in proportion to the bits surviving it while a left shift is one `add` per position. Lane 0 masks (`and 0xFF`, ~4 instructions); lanes 1–3 shift left to the top of the word then do a single logical `>>24`, which is the cheapest right shift since only 8 bits survive — 83/75/67 versus 132/100/67 for the direct `>>8k`.
+  - **Do not write that as C.** `(w << 16) >> 24` is canonicalized straight back to `(w >> 8) & 0xFF` by the middle end. Emitting the two shifts in the expand body works because each `gen_*` synthesizes on the spot, before anything can undo the choice.
+  - **Signed loads** extract unsigned then subtract twice the sign bit (`u - ((u & 0x80) << 1)`), 4 instructions, rather than routing back through an arithmetic shift.
+  - `DATA_ALIGNMENT`/`LOCAL_ALIGNMENT` in `riscv.h` give every static and stack object at least a word on `!TARGET_BYTE`/`!TARGET_HALF` — upstream's `RISCV_EXPAND_ALIGNMENT` bumps only aggregates, which left plain scalar `char`/`short` globals at alignment 1 and therefore permanently on the slow path. This is safe for objects defined elsewhere: `align_variable` applies `DATA_ALIGNMENT` only when `decl_binds_to_current_def_p`, so an `extern char` defined by a library built without it still reads as byte-aligned.
+  - The run-time path is untouched, and so is `riscv_subword_container_mem` — the constant path still routes its word accesses through it, so the qrduino aliasing fix continues to hold (`alias.c` covers this).
 - **`define_insn_and_split "*zero_extendhi<GPR:mode>2"`** — split body (post-reload) branches on `TARGET_SHIFT`: if set, uses the original `ashift+lshiftrt` by 16; if not (sc1), loads 0xFFFF into `operands[0]` and emits `and op0, src_SI, op0`. Uses `gen_rtx_REG(<GPR:MODE>mode, REGNO(operands[1]))` to access the physical register without creating a new pseudo (which is forbidden post-reload).
 - **`define_insn_and_split "*zero_extendqisi2_noandi"`** — handles `andi rd, rs, 0xff` when `!TARGET_ANDI`; splits after reload as `li rd, 255; and rd, rs, rd` with early-clobber to ensure `rd ≠ rs`.
 - **`define_insn "*branch<mode>"`** — bne synthesis: `beq a,b,skip; lui t1,%hi(L); addi t1,t1,%lo(L); jr t1; skip:`.
@@ -284,12 +291,19 @@ The core of all instruction synthesis. Key patterns:
 | SLT | ~60 | 3 | rvsc0, rvsc1 |
 | SLTU | ~70 | 4 | rvsc0, rvsc1 |
 | BNE | 3 | 1 | rvsc0, rvsc1 |
-| LB, LBU | ~70–80 | 2 | rvsc0, rvsc1 |
-| LH, LHU | ~70–80 | 2 | rvsc0, rvsc1 |
-| SB | ~100 (+ 1 lw + 1 sw) | 3 | rvsc0, rvsc1 |
-| SH | ~105 (+ 1 lw + 1 sw) | 3 | rvsc0, rvsc1 |
+| LB, LBU | 4 (lane 0) / 67–83 (lanes 1–3) known lane; ~350 unknown | 2 | rvsc0, rvsc1 |
+| LH, LHU | 3 (lane 0) / 85 (lane 1) known lane; ~350 unknown | 2 | rvsc0, rvsc1 |
+| SB | 7 (lane 0) / 25 (lanes 1–3) known lane; ~210 unknown | 3 | rvsc0, rvsc1 |
+| SH | 7 (lane 0) / 24 (lane 1) known lane; ~210 unknown | 3 | rvsc0, rvsc1 |
 | LUI | 25 (13 fast path) | 0 | rvsc0 |
 | JAL | 5 per call site | 1 | rvsc1 |
+
+The sub-word rows are dynamic retired-instruction counts per access, measured by
+differencing a barriered loop against an empty one under `spike -g` (the static
+count is misleading here: the unknown-lane path is a *loop*, so it has fewer
+static instructions and far more dynamic ones). "Known lane" is the case
+`riscv_subword_const_offset` resolves — a global, a stack slot, or a struct
+field; "unknown" is a pointer whose alignment the compiler cannot see.
 
 ### 5. Target options (`gcc/gcc/config/riscv/riscv.opt`)
 

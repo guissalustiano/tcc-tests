@@ -42,7 +42,13 @@ ISA             = "rv32imac_zicsr_zifencei"
 LD_SCRIPT       = SCRIPT_DIR / "pk32.ld"
 OPT_LEVELS      = ["-O0", "-O1", "-O2", "-O3", "-Os"]
 COMPILE_TIMEOUT = 120
-SPIKE_TIMEOUT   = 300
+# Generous on purpose.  The slowest correct test (memcpy-2.c at -O0) retires
+# 1.05e9 instructions and needs ~85 s of Spike on an idle machine, but a full
+# sweep runs many Spike instances at once, and at a 300 s budget that test sat
+# close enough to the line to flip between runs on load alone.  A record that
+# changes without the toolchain changing defeats the point of committing it --
+# the same reason compile-budget timeouts are counted but never listed.
+SPIKE_TIMEOUT   = 900
 
 # Where a full sweep leaves its record of what failed.  Committed, so the
 # failure set is tracked across runs instead of scrolling past in a terminal.

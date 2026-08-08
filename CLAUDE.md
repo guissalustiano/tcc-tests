@@ -130,12 +130,27 @@ cd tests/sc1 && just behav
 
 | File | Operations exercised |
 |------|---------------------|
+| `alias.c` | Adjacent sub-word objects in one word — RMW store ordering (regression) |
 | `branch.c` | BLT, BGE, BLTU, BGEU |
 | `call.c` | Function call and return |
+| `livejump.c` | Values live across synthesized jumps — t0/t1 clobber (regression) |
 | `logic.c` | NOT, XOR, ANDI, ORI |
-| `mem.c` | LB, LBU, LH, LHU, SB, SH |
+| `mem.c` | LB, LBU, LH, LHU, SB, SH — all four byte lanes and both halfword lanes |
 | `shift.c` | SLL, SRL, SRA (constant and variable counts) |
 | `slt.c` | SLT, SLTU |
+
+`alias.c` and `livejump.c` cover the two backend defects that only Embench
+found (the qrduino sub-word aliasing miscompile fixed in gcc `8a0646efe`, and
+the `t0` clobber fixed in gcc `0b3abf3`). Both were verified to *fail* against
+a build with their fix reverted — `alias.c` at `-O2`/`-O3`, `livejump.c` at
+`-O1` and above — while every other test in the suite passed, which is the
+gap they exist to close. Two properties they depend on, worth preserving in
+any edit: every expected value is a literal while every stored value comes
+from a `volatile` source, so no check can be constant-folded away (a mutation
+check confirms each assertion is live at all five levels); and `livejump.c`
+carries twenty-four accumulators as separate scalars, not an array, because
+only filling the register file makes the allocator park a live value in `t0`
+across a jump.
 
 rvsc0 cannot use pk (which reaches `main` via `jalr`), so `tests/sc0/behav.py` runs bare-metal HTIF instead: each `tests/behav/*.c` defines `int run_test(void)`, and `entry.S` provides `_start`, sets up `sp`/`gp`, calls it, and writes the HTIF exit token to `tohost`. Linked with `link32.ld`, run as `spike --isa=rv32i`. These tests use volatile stack locals rather than globals — taking the address of a global needs `lui`, which rvsc0 lacks and cannot synthesize (unlike large integer constants, built with `addi`/`add`, which work at any load address including Spike's `0x80000000`).
 

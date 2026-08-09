@@ -18,6 +18,7 @@ import re
 import signal
 import sys
 import tempfile
+import threading
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -57,6 +58,18 @@ REPORT_PATH     = SCRIPT_DIR / "torture-behav-failures.txt"
 # Tests that produce correct code but generate so many synthesis instructions
 # that Spike exceeds SPIKE_TIMEOUT even on an unloaded machine.
 KNOWN_SLOW: set[tuple[str, str]] = set()
+
+# Sources that name their scratch file with tmpnam().  Under pk getpid() is
+# always 1, so newlib's tmpnam() hands every one of these the same absolute
+# path -- /tmp/t1.0, identical across processes and across opt levels.  Run two
+# of them at once and one truncates the other's file between its write and its
+# read, which surfaces as "fopen for reading: No such file or directory" on
+# whichever lost.  Nothing about the toolchain is involved; the loser is
+# whichever the scheduler interleaved, so a sweep could pass or fail on load
+# alone.  Serialize them against each other (not against the other 8405 items,
+# which touch no shared path) so the record stays reproducible.
+_TMPNAM_RE   = re.compile(r"\b(gcc_tmpnam|tmpnam|tmpfile)\s*\(")
+_tmpnam_lock = threading.Lock()
 
 # --- What this target provides, as the test suite describes requirements -----
 #
@@ -316,8 +329,14 @@ def run_one(compiler: str, pk: str, tmp: Path, src: Path, opt: str,
     if not built.ok:
         return Result(src, opt, _COMPILE_OUTCOME[built.status],
                       signature=built.signature)
+    # See _tmpnam_lock: these sources all share one hardcoded scratch path.
+    shared_tmpfile = bool(_TMPNAM_RE.search(src.read_text(errors="replace")))
     try:
-        run = run_spike_capture(ISA, elf, timeout=SPIKE_TIMEOUT, pk=pk)
+        if shared_tmpfile:
+            with _tmpnam_lock:
+                run = run_spike_capture(ISA, elf, timeout=SPIKE_TIMEOUT, pk=pk)
+        else:
+            run = run_spike_capture(ISA, elf, timeout=SPIKE_TIMEOUT, pk=pk)
     except SpikeTimeout:
         elf.unlink(missing_ok=True)
         return Result(src, opt, Outcome.TIMEOUT,

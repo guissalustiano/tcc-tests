@@ -894,7 +894,13 @@ uint32_t sll(uint32_t rs1, uint32_t rs2) {
 
 *Constant shift count.* When $b$ is a compile-time constant (e.g. `x << 3`), GCC unrolls the recursion directly during expand: $b$ consecutive `add rd, rd, rd` instructions, with no loop, no counter, and no back-edge at all. Cost is exactly $b$ instructions ($b >= 1$; the identity move for $b = 0$ is elided). The resulting assembly is listed in @apx-sll-const-asm.
 
-*Variable shift count.* When $b$ is only known at runtime (e.g. `x << n`), the shift count must be counted down in a register, and the doubling is emitted as a genuine loop: each iteration performs the doubling (`add`), decrements the counter (`addi`), and tests it (`beq`); because sc1 has no native unconditional jump (`jal` and `auipc` are both absent), the back-edge to the top of the loop is itself synthesized as `lui` + `addi` + `jr` (three instructions). Every iteration therefore costs 6 instructions, except the final one, which exits through the taken `beq` and skips the back-jump. With the mask and guard setup this gives $6b + 1$ instructions for $b >= 1$, a minimum of 3 when $b = 0$ (mask and guard only, no loop) and a maximum of 187 when $b = 31$, at the cost of one extra register. The resulting assembly is listed in @apx-sll-asm. This is the dominant reason variable-count shift-heavy code expands so sharply on sc1: the synthesized loop pays not only for the repeated addition but also for re-materializing its own back-edge on every pass.
+*Variable shift count.* When $b$ is only known at runtime (e.g. `x << n`), the recursion cannot be unrolled against a known $b$ — but it can be unrolled against the *bits* of $b$. Writing the masked count in binary, $b = sum_(k=0)^4 b_k 2^k$, gives
+
+$ x << b = x underbrace(<< b_4 dot 16, "16 doublings if " b_4) underbrace(<< b_3 dot 8, "8 if " b_3) dots underbrace(<< b_0 dot 1, "1 if " b_0) $
+
+so the synthesis emits, for each of the five bit positions $k$, a test of that bit (`li` the mask $2^k$, `and` it with the count, `beq` past the block if zero) followed by a straight-line chain of $2^k$ doublings. Worst case is all five bits set: $16 + 8 + 4 + 2 + 1 = 31$ doublings plus five three-instruction tests, measured at 47 retired instructions, using one extra register. There is no counter, no loop, and no back-edge — every branch is a short forward `beq`, which is native on both restricted targets, so rvsc0 gains the same way. The count is never explicitly masked to $[0, 31]$: only bits 0 through 4 are ever tested, which *is* the C11 §6.5.7 truncation. The resulting assembly is listed in @apx-sll-asm.
+
+The cost is now essentially flat rather than proportional to $b$, which is the point: the previous formulation counted the shift amount down in a register and paid a full loop iteration per unit, including re-materializing its own back-edge (`lui` + `addi` + `jr`) on every pass, for $6b + 1$ instructions and a worst case of 187 at $b = 31$. Against that, decomposition is a decisive win everywhere except at very small counts, where the five unconditional bit tests are pure overhead that the count-down loop avoided by exiting immediately: measured per operand, $b = 1$ costs 17 instructions against the loop's 7, $b = 8$ costs 24 against 49, and $b = 31$ costs 47 against 187. The crossover is near $b = 3$. Static size moves the other way — a variable shift is now a straight-line block of roughly 47 instructions instead of a short loop — which is the mirror image of the trade already made for constant-count shifts above.
 
 
 ===== Logical Right Shift (SRL) <sc1-srl>
@@ -920,7 +926,7 @@ uint32_t srl(uint32_t x, uint32_t shift) {
 
 *Constant shift count.* When $s$ is a compile-time constant, GCC unrolls both the `in_mask` pre-shift and the $(32-s)$-iteration extraction body directly at split time: every `<<=` above becomes a straight-line chain of `add` doublings, and every loop back-edge disappears entirely. Only the data-dependent bit test (`x & in_mask`, then conditionally `or`) survives as a forward, non-looping branch — the loop *control* is eliminated, not the per-bit test itself, since whether a given input bit is set cannot be known until runtime. Measured worst case (masked shift amount $s=1$, giving 31 surviving extraction steps, over an all-ones operand) is 158 instructions, using 3 extra registers (`out_mask`, `in_mask`, a comparison temporary). The resulting assembly is listed in @apx-srl-const-asm.
 
-*Variable shift count.* When $s$ is only known at runtime, both the `in_mask` pre-shift and the extraction loop must be counted down at runtime. The main loop runs $(32 - s)$ iterations, each of which pays not only for the bit test and merge but also for re-materializing its own back-edge; initialization and the `in_mask` pre-shift add overhead proportional to $s$, bringing the measured worst case to 477 retired instructions and requiring five extra registers (four scratch registers plus the shift-count register). The resulting assembly is listed in @apx-srl-asm.
+*Variable shift count.* When $s$ is only known at runtime, the extraction body remains a genuine loop of $(32 - s)$ iterations — the number of bits to move is a runtime quantity, and unlike the left shift there is no way to decompose it into a fixed number of blocks. Two of its three costs have nonetheless been removed. The `in_mask` pre-shift, marked `[sll]` above, is a left shift by the runtime count and so uses the binary decomposition of @sc1-sll rather than a second nested loop; and the loop's own back-edge is a single always-taken `beq zero, zero` rather than the three-instruction `lui`/`addi`/`jr` an unconditional jump costs on sc1 (@sc1-backedge). What is left per iteration is the bit test, the conditional merge, the two mask advances and the back-edge: six instructions, or seven when the bit is set. The measured worst case is 332 retired instructions, using three scratch registers; the previous formulation, with a count-down pre-shift loop and a re-materialized back-edge, measured 477 and needed four.
 
 ===== Arithmetic Right Shift (SRA) <sc1-sra>
 
@@ -945,7 +951,7 @@ uint32_t sra(uint32_t x, uint32_t shift) {
 
 *Constant shift count.* When $s$ is a compile-time constant, the reused SRL expansion is unrolled exactly as described in @sc1-srl, and `sign_mask` is built the same way: a straight-line chain of $(32-s)$ `add` doublings seeded from $-1$, rather than the runtime `sub`/`add`/loop used to compute it in the variable case. Seeding from $-1$ (loadable via a single `addi`) rather than a general `li` keeps this step independent of `lui`, which matters because this synthesis is shared with rvsc0. Measured worst case (masked shift amount $s=1$, over an all-ones operand) is 194 instructions, using 5 extra registers. The resulting assembly is listed in @apx-sra-const-asm.
 
-*Variable shift count.* When $s$ is only known at runtime, the synthesis reuses the full variable-count SRL expansion and appends a runtime loop that builds `sign_mask` by doubling $-1$ a runtime-computed $(32-s)$ times, so it pays the SRL loop and a second loop of its own, reaching a measured worst case of 669 retired instructions at the cost of six extra registers. The resulting assembly is listed in @apx-sra-asm.
+*Variable shift count.* When $s$ is only known at runtime, the synthesis reuses the full variable-count SRL expansion and then builds `sign_mask` by left-shifting $-1$ a runtime-computed $(32-s)$ places. That second shift is again a left shift by a runtime count, so it too is a binary decomposition (@sc1-sll) rather than the loop it used to be; the only loop left in the whole expansion is the one SRL extraction loop it inherits. The measured worst case is 391 retired instructions using seven scratch registers, against 669 and eight for the previous two-loop formulation. The resulting assembly is listed in @apx-sra-asm.
 
 === Comparisons <sc1-comparisons>
 
@@ -1081,7 +1087,7 @@ int32_t  result   = (int32_t)(shifted << BITS) >> BITS;  // arithmetic: [sra]
 
 The resulting assembly sequences are listed in @apx-lb-lh-asm.
 
-Since sc1 shifts are themselves synthesized via `add`/`beq` loops, and the extraction above uses four of them, a byte load retires up to 608 instructions and a halfword load up to 680 (@tab-synthesis-cost). The worst case is an *aligned* address rather than a misaligned one: the smaller the byte offset, the smaller the extraction shift amount, and the more bit positions the synthesized `srl` has left to walk.
+Since sc1 shifts are themselves synthesized via `add`/`beq` loops, and the extraction above uses four of them, a byte load retires up to 460 instructions and a halfword load up to 532 (@tab-synthesis-cost). The worst case is an *aligned* address rather than a misaligned one: the smaller the byte offset, the smaller the extraction shift amount, and the more bit positions the synthesized `srl` has left to walk.
 
 === Stores <sc1-stores>
 
@@ -1106,7 +1112,7 @@ void sb(uint8_t *addr, uint32_t rs2) {
 }
 ```
 
-The resulting assembly sequence is listed in @apx-sb-asm. The expansion requires one extra `lw` and one extra `sw` surrounding the computation, retiring up to 308 instructions and using three extra registers (t0–t2).
+The resulting assembly sequence is listed in @apx-sb-asm. The expansion requires one extra `lw` and one extra `sw` surrounding the computation, retiring up to 95 instructions and using three extra registers (t0–t2).
 
 The `sh` synthesis follows the same read-modify-write pattern as `sb`, with `MASK = 2` and mask constant `0xFFFF`. That constant exceeds the 12-bit `addi` range, so it must itself be materialized, and how depends on the target. rvsc1 has `lui` and builds it as `lui 0x10; addi -1`. rvsc0 does not, and routes the constant through the `addi`/shift construction of @sc0-lui instead --- the same path every non-small constant takes on that target. The sequence needs the constant twice, once for the mask that clears the halfword field of the loaded word and once for the mask that truncates the value being stored, so whichever construction applies is paid twice per `sh`. The same applies to the `0xFFFF` used by the `lh`/`lhu` synthesis, which materializes it once.
 
@@ -1121,7 +1127,7 @@ void sh(uint16_t *addr, uint32_t rs2) {
 }
 ```
 
-The resulting assembly sequence is listed in @apx-sh-asm. The expansion likewise requires one extra `lw` and one extra `sw`, retiring up to 215 instructions and using three extra registers (t0–t2).
+The resulting assembly sequence is listed in @apx-sh-asm. The expansion likewise requires one extra `lw` and one extra `sw`, retiring up to 82 instructions and using three extra registers (t0–t2).
 
 === Control Flow <sc1-jump>
 
@@ -1143,6 +1149,18 @@ back:
 
 Each call site expands to 5 instructions and requires one extra register (`t0`).
 
+==== Loop Back Edges <sc1-backedge>
+
+The same absence of `jal` and `auipc` makes an *unconditional* jump cost three instructions on rvsc1 — `lui`, `addi`, `jr` against a materialized absolute address — where rvsc0, which lacks `lui` too, pays only one. rvsc0's compiler cannot materialize the address at all, so it is forced into the cheaper construction: a conditional branch whose condition is trivially true.
+
+```asm
+beq  zero, zero, L      # always taken, PC-relative, one instruction
+```
+
+This is a legal `beq` with both source registers hardwired to zero, so the comparison always succeeds, and its PC-relative displacement field reaches $plus.minus 4$ KiB. rvsc1 does not use it for jumps in general, because a jump's distance is not bounded in general and a `beq` that turns out to be out of range would be silently relaxed by the assembler into instructions the target does not have.
+
+For the back edge of a loop that this backend *itself* emits, though, the distance is bounded by construction: the loop body is a fixed handful of instructions written by the expander, never more than a few dozen bytes. Those back edges therefore use the always-taken `beq`, one instruction instead of three. Two loops remain in the synthesis after the left shift became straight-line (@sc1-sll) — the bit-extraction loops of `srl` and `sra` — and both save two instructions on every iteration, which is where the bulk of the improvement in @tab-synthesis-cost's variable-count right-shift rows comes from. The out-of-range case is handled rather than assumed away: the construction is an ordinary conditional-branch instruction as far as the compiler is concerned, so it carries the same length attribute as any other, and if branch shortening ever measured a displacement beyond range it would select the long form (a short `beq` over a `lui`/`addi`/`jr` block) by itself.
+
 === Cost Summary <sc1-synthesis-cost>
 
 @tab-synthesis-cost summarises the instruction and register cost for every synthesis covered in this section. Counts reflect worst-case inputs (e.g. maximum shift amount, non-zero byte position, misaligned halfword address).
@@ -1163,21 +1181,21 @@ Each call site expands to 5 instructions and requires one extra register (`t0`).
     [`ori` (imm)],   [rvsc1],        [2],    [1],
     [`andi` (imm)],  [rvsc1],        [2],    [1],
     [`sll` (const)], [rvsc0, rvsc1], [$b$ (max 31)], [0],
-    [`sll` (var)],   [rvsc0, rvsc1], [187],  [1],
+    [`sll` (var)],   [rvsc0, rvsc1], [47],   [1],
     [`srl` (const)], [rvsc0, rvsc1], [158],  [3],
-    [`srl` (var)],   [rvsc0, rvsc1], [477],  [5],
+    [`srl` (var)],   [rvsc0, rvsc1], [332],  [3],
     [`sra` (const)], [rvsc0, rvsc1], [194],  [5],
-    [`sra` (var)],   [rvsc0, rvsc1], [669],  [6],
+    [`sra` (var)],   [rvsc0, rvsc1], [391],  [7],
     [`slt`],         [rvsc0, rvsc1], [49],   [3],
     [`sltu`],        [rvsc0, rvsc1], [48],   [4],
     [`bne`],         [rvsc0, rvsc1], [3],    [1],
-    [`blt`/`bltu`],  [rvsc0, rvsc1], [27],   [4],
-    [`bge`/`bgeu`],  [rvsc0, rvsc1], [28],   [4],
+    [`blt`/`bltu`],  [rvsc0, rvsc1], [16],   [7],
+    [`bge`/`bgeu`],  [rvsc0, rvsc1], [17],   [7],
     [`lui` (addi+shift)], [rvsc0],   [25],   [0],
-    [`lb`/`lbu`],    [rvsc0, rvsc1], [608],  [2],
-    [`lh`/`lhu`],    [rvsc0, rvsc1], [680],  [2],
-    [`sb`],          [rvsc0, rvsc1], [308],  [3],
-    [`sh`],          [rvsc0, rvsc1], [215],  [3],
+    [`lb`/`lbu`],    [rvsc0, rvsc1], [460],  [2],
+    [`lh`/`lhu`],    [rvsc0, rvsc1], [532],  [2],
+    [`sb`],          [rvsc0, rvsc1], [95],   [3],
+    [`sh`],          [rvsc0, rvsc1], [82],   [3],
     [`jump`],        [rvsc0],        [1],    [0],
     [`jump`],        [rvsc1],        [3],    [1],
     [`jal`],         [rvsc1],        [5],    [1],
@@ -1186,13 +1204,13 @@ Each call site expands to 5 instructions and requires one extra register (`t0`).
   caption: [Worst-case instruction and register cost for each synthesis],
 ) <tab-synthesis-cost>
 
-Counts in @tab-synthesis-cost are dynamic: instructions retired for the worst-case operand, which is the quantity @sec-embench-perf draws on. They are measured rather than derived, by calling a one-operation function in a loop and differencing the retired-instruction count between two trip counts, so that the loop and call overhead cancels exactly. Two things about the worst case are easy to get wrong and were determined by scanning rather than assumed. The cost of a shift depends on the data as well as the amount, because the extraction step for each bit position is a conditional merge: `srl` by 1 costs 158 instructions on an all-ones operand but 127 on zero. And sub-word loads are most expensive at an *aligned* address, not a misaligned one, because the extraction shift gets cheaper as the offset grows --- `lb` costs 608 instructions at offset 0 and 389 at offset 3, the opposite of what "worst-case misaligned access" suggests.
+Counts in @tab-synthesis-cost are dynamic: instructions retired for the worst-case operand, which is the quantity @sec-embench-perf draws on. They are measured rather than derived, by calling a one-operation function in a loop and differencing the retired-instruction count between two trip counts, so that the loop and call overhead cancels exactly. Two things about the worst case are easy to get wrong and were determined by scanning rather than assumed. The cost of a shift depends on the data as well as the amount, because the extraction step for each bit position is a conditional merge: `srl` by 1 costs 158 instructions on an all-ones operand but 127 on zero. And sub-word loads are most expensive at an *aligned* address, not a misaligned one, because the extraction shift gets cheaper as the offset grows --- `lb` costs 460 instructions at offset 0 and 244 at offset 3, the opposite of what "worst-case misaligned access" suggests.
 
-Because the counts are measured on the code actually generated, the rows are not additive: the ordered branches cost 27 and 28 instructions although each is defined as an `[slt]` --- 49 instructions --- followed by a `beq` or `bne`. A branch consumes the comparison only as a zero test, so the shift that would normalize it to 0 or 1 is folded into a sign-bit mask and its 31-step doubling chain never appears (@sc1-ordered-branches). Every row of @tab-synthesis-cost is the cost of that operation in the context measured, not a term to be summed with the rows it is built from.
+Because the counts are measured on the code actually generated, the rows are not additive: the ordered branches cost 16 and 17 instructions although each is defined as an `[slt]` --- 49 instructions --- followed by a `beq` or `bne`. A branch consumes the comparison only as a zero test, so the shift that would normalize it to 0 or 1 is folded into a sign-bit mask and its 31-step doubling chain never appears (@sc1-ordered-branches). Every row of @tab-synthesis-cost is the cost of that operation in the context measured, not a term to be summed with the rows it is built from.
 
-Static and dynamic counts coincide only for the straight-line rows. The variable-count shifts differ sharply in the other direction: `srl` (var) retires up to 477 instructions but occupies 35 in `.text`, since the count is a loop trip count rather than a code size. @tbl-embench-size, which measures `.text`, therefore weights those rows far less heavily than @tbl-embench-perf does.
+Static and dynamic counts coincide only for the straight-line rows. The variable-count shifts still differ, though the gap has narrowed and partly reversed: `srl` (var) retires up to 332 instructions and now occupies 65 in `.text`, against 477 retired and 35 static before, because trading a loop for a straight-line binary decomposition converts trip count into code size. `sll` (var) is the extreme case --- 47 retired and 47 static, the two now identical, where the count-down loop was 187 retired against a twelve-instruction body. @tbl-embench-size, which measures `.text`, therefore weights these rows more heavily than it used to, and @tbl-embench-perf less; the reversal is deliberate and is the same trade already made for constant-count shifts.
 
-The figures are measured on rvsc1. rvsc0 synthesizes the same operations but its costs differ in both directions, and by more than a rounding: its loop back-edge is a single `beq zero,zero` where rvsc1 needs `lui`+`addi`+`jr`, making every loop iteration two instructions cheaper, while every constant wider than 12 bits costs an `addi`/shift construction instead of `lui`+`addi`. For `sh` the two effects give 176 instructions on rvsc0 against 215 on rvsc1 --- the target with fewer instructions producing the cheaper expansion.
+The figures are measured on rvsc1. rvsc0 synthesizes the same operations, and the two targets are now closer than they were: the loop back-edge, formerly a single `beq zero,zero` on rvsc0 against `lui`+`addi`+`jr` on rvsc1, is the cheap form on both (@sc1-backedge), and the left shifts that were loops on both are now straight-line on both. What remains is constant materialization --- every constant wider than 12 bits costs rvsc0 an `addi`/shift construction where rvsc1 emits `lui`+`addi` --- which now moves rvsc0's costs in one direction only, upward.
 
 
 == GCC Implementation <sc1-gcc-impl>
@@ -1447,7 +1465,7 @@ The rvsc1 corpus contains 19 programs, listed by operation category in @tbl-sc1-
     [Byte store],   [SB — synthesized via `lw`+clear+insert+`sw`],
     [Halfword store], [SH — synthesized via `lw`+clear+insert+`sw`],
     [Constant-count shifts], [SLL, SRL, SRA with compile-time shift counts],
-    [Variable left shift], [SLL with runtime shift count — count-down loop],
+    [Variable left shift], [SLL with runtime shift count — binary decomposition],
     [Comparisons],  [SLT and SLTU — synthesized via sub/xor/and/lshr],
     [Variable arithmetic right shift], [SRA with runtime shift count — bit-extraction loop + sign-fill],
     [Variable logical right shift], [SRL with runtime shift count — bit-extraction loop],
@@ -1580,7 +1598,7 @@ No testing is performed for rvsc3 through rvsc7. These targets contain no synthe
 
 Each synthesized instruction expands into a sequence of native instructions, increasing the static size of the compiled binary. The expansion ratio --- the number of native instructions emitted divided by the number of instructions a full-ISA compiler would emit --- quantifies the cost of each missing hardware instruction.
 
-Synthesis sequences fall into three categories. _Constant-length_ expansions always emit the same number of instructions regardless of operand values: NOT expands to 2 instructions, XOR to 3 (register operands; 4 with an immediate operand, @sc1-xor), and each immediate variant (ANDI, ORI) adds 1 instruction. _Constant-count shifts_ are straight-line — the shift amount is known at compile time, so the expansion is unrolled and contains no loop — but their length still grows with that amount: SLL costs exactly $b$ instructions (at most 31), while SRL and SRA reach worst cases of 158 and 194 instructions. _Variable-length_ expansions depend on runtime values: variable-count SLL, SRL, and SRA use count-down loops whose length is proportional to the shift amount, with worst-case counts of 187, 477, and 669 instructions respectively.
+Synthesis sequences fall into three categories. _Constant-length_ expansions always emit the same number of instructions regardless of operand values: NOT expands to 2 instructions, XOR to 3 (register operands; 4 with an immediate operand, @sc1-xor), and each immediate variant (ANDI, ORI) adds 1 instruction. _Constant-count shifts_ are straight-line — the shift amount is known at compile time, so the expansion is unrolled and contains no loop — but their length still grows with that amount: SLL costs exactly $b$ instructions (at most 31), while SRL and SRA reach worst cases of 158 and 194 instructions. _Variable-length_ expansions depend on runtime values, though less sharply than they once did: variable-count SLL is now straight-line, its cost bounded at 47 instructions regardless of the amount, while SRL and SRA retain one bit-extraction loop each and reach 332 and 391. The three previously used count-down loops throughout and reached 187, 477, and 669.
 
 The per-instruction figures above bound the cost of any single synthesized operation, but the size penalty of a complete program depends on how often each restricted instruction actually appears. To quantify this on realistic code, the Embench-IoT benchmark suite @embench was compiled for three toolchains and the static code size of each benchmark compared:
 
@@ -1676,7 +1694,7 @@ This aggregate should not be compared directly with the #sym.times 13.7 publishe
 
 The results establish correctness first and cost second. On the correctness axis, the ISA compliance tests confirm that the compiler never emits a forbidden mnemonic. Behavioral equivalence is established independently by execution on Spike: every rvsc1 program verifies its own results against independently computed values and exits 0, and every rvsc0 single-function program writes the corresponding success token to `tohost`. Synthesis therefore changes how a computation is expressed, not what it computes. That now holds across every program the three test suites actually execute --- 95 ISA-compliance cases, 30 behavioral cases, and 8 345 of the 8 420 torture combinations, the remaining 75 being programs that declare a prerequisite this freestanding target does not provide, or that do not compile, for reasons unrelated to the instruction set (@tbl-torture-skips) --- and across all nineteen Embench benchmarks. It did not hold before this measurement. The torture suite was failing 36 combinations, and two further defects lay outside what any suite reached at all. The 36 were attributed only afterwards, by rebuilding the compiler with each candidate fix reverted in turn until the failure set reappeared; the other two were found by running a fourth, independent corpus and by refusing to accept a failed run as a number. The suites bound where correctness has been demonstrated, and widening the corpus widened the bound.
 
-The cost of that re-expression is quantified along two dimensions. Statically, synthesis inflates code size by a geometric mean of #sym.times 7.13 over the Embench suite (@tbl-embench-size); dynamically, it inflates the retired-instruction count by a geometric mean of #sym.times 22.2 (@tbl-embench-perf). The dynamic penalty is the larger of the two because the costliest syntheses --- the variable-count shift loops, each of which re-materializes its own back-edge every iteration (@sc1-sll) --- tend to sit inside the hottest loops, so their cost is multiplied by trip count rather than merely by static occurrence. Both penalties vary by more than an order of magnitude across workloads: statically from #sym.times 1.42 (`ud`) to #sym.times 22.16 (`statemate`), and dynamically from #sym.times 3.6 (`matmult-int`) to #sym.times 107.2 (`statemate`).
+The cost of that re-expression is quantified along two dimensions. Statically, synthesis inflates code size by a geometric mean of #sym.times 7.13 over the Embench suite (@tbl-embench-size); dynamically, it inflates the retired-instruction count by a geometric mean of #sym.times 22.2 (@tbl-embench-perf). The dynamic penalty is the larger of the two because the costliest syntheses --- the variable-count shifts and the unknown-lane sub-word accesses built on them (@sc1-srl) --- tend to sit inside the hottest loops, so their cost is multiplied by trip count rather than merely by static occurrence. Both penalties vary by more than an order of magnitude across workloads: statically from #sym.times 1.42 (`ud`) to #sym.times 22.16 (`statemate`), and dynamically from #sym.times 3.6 (`matmult-int`) to #sym.times 107.2 (`statemate`).
 
 For the pedagogical setting these targets are built for, this variation is the point rather than a limitation. The programs students write in an introductory single-cycle course, small loops, modest shift amounts, few byte-granular memory accesses, fall at the inexpensive end of both distributions, so the toolchain remains practical to use. At the same time, the wide spread makes the cost of each ISA restriction concrete and measurable: a student can compile the same source for rvsc1 and rvsc2, compare the `-S` output, and see exactly how many native instructions a single missing `sll` or `sb` expands into. The compiler thus turns an abstract statement about instruction-set design --- "omitting an instruction shifts its cost into software" --- into a number the student can read off the assembly.
 
@@ -1708,7 +1726,7 @@ The synthesized shifts are functionally correct but dynamically expensive to the
 
 == Future Work
 
-The most direct extension would be further performance optimization within the existing synthesis. Constant-count SRL and SRA are already unrolled to straight-line code, but remain linear in the word width: 158 and 194 instructions in the worst case, because each bit position is extracted and merged individually. A bitmask-and-recombine formulation, moving several bits per step instead of one, could reduce this substantially without any new hardware. The variable-count forms have far more headroom still --- measured at 477 and 669 instructions, roughly three times their unrolled equivalents --- since each of their loop iterations pays 6 instructions, half of them spent re-materializing the back-edge that sc1's missing unconditional jump forces the loop to rebuild on every pass. Making that back-edge cheaper would be worth more than any other single change: it is paid once per bit position in every variable-count shift, and it is the entire difference between rvsc0's loops and rvsc1's.
+The most direct extension would be further performance optimization within the existing synthesis. Constant-count SRL and SRA are already unrolled to straight-line code, but remain linear in the word width: 158 and 194 instructions in the worst case, because each bit position is extracted and merged individually. A bitmask-and-recombine formulation, moving several bits per step instead of one, could reduce this substantially without any new hardware. The variable-count forms have more headroom still, at 332 and 391 instructions, but the two cheap wins there have already been taken: the left shift that both of them use internally is now a straight-line binary decomposition rather than a count-down loop (@sc1-sll), and the one loop each retains pays a single-instruction back-edge rather than a re-materialized absolute jump (@sc1-backedge). What is left is the bit-extraction loop itself, which moves exactly one bit per iteration; the same bitmask-and-recombine idea that would help the constant-count forms is what would help here, and it is the one remaining change of that size.
 
 On the hardware side, each synthesis in this work corresponds exactly to the cost of the missing instruction in hardware. A student who extends the Chapter 4.4 processor with, for example, a barrel shifter could recompile with `-mshift` enabled and the compiler would switch to native `sll`/`srl`/`sra` automatically, making the hardware improvement immediately observable in both binary size and execution time. Building this feedback loop into a course lab is a natural next step.
 
@@ -1797,18 +1815,29 @@ No loop, no counter, no back-edge — just $b$ doublings.
 
 == SLL Synthesis Assembly (Variable Count) <apx-sll-asm>
 
+Real compiler output for `sll_var` from `tests/sc1/tests/isa/sll_var.c` (`x << n`), reproducible via `rvsc1-unknown-elf-gcc -S -O1 tests/sc1/tests/isa/sll_var.c`. Five blocks, one per bit of the count, each guarded by a test of that bit and containing $2^k$ doublings; the excerpt shows the $k=4$ and $k=3$ blocks in full and elides the rest, which are identical in structure with 4, 2 and 1 doublings:
+
 ```asm
-# rd = rs1 << rs2
-    add   t1, rs2, x0    # t1 = rs2 (save shift count; rd may alias rs2)
-    add   rd, rs1, x0    # rd = rs1
-    beq   t1, x0, done   # if rs2 == 0, no shift needed
-loop:
-    add   rd, rd, rd     # rd <<= 1
-    addi  t1, t1, -1
-    beq   t1, x0, done
-    beq   x0, x0, loop
-done:
+sll_var:
+    li    a5, 16         # test bit 4 of the count
+    and   a5, a1, a5
+    beq   a5, zero, .L2  # not set: skip the 16 doublings
+    add   a0, a0, a0     # x <<= 16
+    add   a0, a0, a0
+    # ... 14 more doublings ...
+.L2:
+    li    a5, 8          # test bit 3
+    and   a5, a1, a5
+    beq   a5, zero, .L3
+    add   a0, a0, a0     # x <<= 8
+    # ... 7 more doublings ...
+.L3:
+    # ... bits 2, 1 and 0: 4, 2 and 1 doublings, same shape ...
+.L6:
+    ret
 ```
+
+No loop, no counter and no back-edge: every branch is a short forward `beq`, and the count is never masked, because testing only bits 0 through 4 is itself the mod-32 truncation.
 
 == SRL Synthesis Assembly (Constant Count) <apx-srl-const-asm>
 

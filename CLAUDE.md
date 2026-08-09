@@ -304,9 +304,11 @@ The core of all instruction synthesis. Key patterns:
 
 - **`define_expand "<optab>si3"`** — handles all shift types via the `any_shift` code iterator. `(<CODE>) == ASHIFT/LSHIFTRT/ASHIFTRT` are compile-time constants, so all three shift syntheses live in the same expand body with `if ((<CODE>) == ...)` guards. Never add a duplicate `define_expand` with the same name.
   - `ASHIFT` const (sc1): N repeated `add rd, rd, rd` instructions.
-  - `ASHIFT` variable (sc1): count-down loop of `add rd, rd, rd`.
-  - `LSHIFTRT` (sc1): loop-based bit extraction via `and`/`or`/`add`/`beq`; a sub-loop computes `in_mask = 1 << shamt`.
-  - `ASHIFTRT` (sc1): same srl loop inlined, then if sign bit was set, OR in `sign_mask = -1 << (32 − shift)`.
+  - `ASHIFT` variable (sc1): straight-line **binary decomposition** of the count (`riscv_emit_ashl_decomp`), not a loop — for each bit k of the count, `li mask,2^k; and; beq` and, if set, 2^k doublings. 31 doublings + 5 three-instruction tests in the worst case, and no back edge at all. The count is not pre-masked: only bits 0..4 are tested, which *is* the mod-32 truncation.
+  - `LSHIFTRT` (sc1): loop-based bit extraction via `and`/`or`/`add`/`beq`; `in_mask = 1 << shamt` comes from the same decomposition.
+  - `ASHIFTRT` (sc1): same srl loop inlined, then if sign bit was set, OR in `sign_mask = -1 << (32 − shift)` — also built by the decomposition.
+  - **Loop back edges** (the two surviving bit-extraction loops) use `riscv_emit_loop_back_edge`, which emits an always-taken `beq zero,zero,L` — a single instruction — instead of the `jump` pattern's `lui`+`addi`+`jr`. It is an ordinary `*branch<mode>` EQ insn, so it inherits that pattern's length attribute and branch shortening picks the safe long form by itself if the distance ever exceeded ±4 KiB; nothing folds it away because RTL does not model `x0` as a constant. No barrier follows it: the fall-through edge is real (never taken) and lands on the loop's own exit label.
+  - **Trivial-operand folds.** Synthesis destroys the operation it replaces — after `xor` becomes an `and`/`or`/`sub` triple, no later pass can recognise `x ^ 0` again — so the identities are folded *before* lowering, in three places: the `<optab><mode>3` expand (const 0 / −1 / equal operands), `riscv_emit_xor_scratch` and `riscv_emit_not_scratch` (post-reload, where an operand is often the hard zero register), and `riscv_emit_slt_synth` / `*branch<mode>_slt_synth` (comparison against zero needs no overflow correction at all, so `if (x < 0)` is `li mask; and; beq`). `@cbranch<mode>4` and `cstore<mode>4` deliberately leave a literal zero unforced so those folds can see it.
 - **`define_expand "<optab>si3"` (logic)** — `and3`/`ior3`/`xor3` share one expand with `(<CODE>) ==` guards:
   - `XOR` (sc1): `(a | b) - (a & b)` — `and ab_and,a,b; or ab_ior,a,b; sub rd,ab_ior,ab_and`. Uses two pseudos so IRA keeps a dataflow edge into the final `sub`; the earlier `~(a&b)&(a|b)` De Morgan form lacked that edge and let IRA alias the NOT result onto an operand register, corrupting `ab_ior` (see riscv.md ~1787 comment).
   - `IOR` immediate (sc1): `li t, imm; or rd, rs, t`.
@@ -338,26 +340,44 @@ The core of all instruction synthesis. Key patterns:
 | Operation | Instructions (worst case) | Extra registers | Applies to |
 |-----------|--------------------------|-----------------|------------|
 | NOT | 2 | 0 | rvsc0, rvsc1 |
-| XOR | 3 (reg); 4 (imm) | 1 (reg); 2 (imm) | rvsc0, rvsc1 |
-| SLL | 6b + 1 (max 187 at b=31) | 1 | rvsc0, rvsc1 |
-| SRL | ~170 | 5 | rvsc0, rvsc1 |
-| SRA | ~200 | 6 | rvsc0, rvsc1 |
-| SLT | ~60 | 3 | rvsc0, rvsc1 |
-| SLTU | ~70 | 4 | rvsc0, rvsc1 |
+| XOR | 4 (reg); 5 (imm) | 1 (reg); 2 (imm) | rvsc0, rvsc1 |
+| SLL const | b (max 31 at b=31) | 1 | rvsc0, rvsc1 |
+| SLL var | 47 (was 187) | 1 | rvsc0, rvsc1 |
+| SRL const | 139 | 3 | rvsc0, rvsc1 |
+| SRL var | 256 (was 344) | 3 | rvsc0, rvsc1 |
+| SRA const | 179 | 5 | rvsc0, rvsc1 |
+| SRA var | 331 (was 564) | 7 | rvsc0, rvsc1 |
+| SLT | 49 | 3 | rvsc0, rvsc1 |
+| SLTU | 48 | 4 | rvsc0, rvsc1 |
 | BNE | 3 | 1 | rvsc0, rvsc1 |
-| LB, LBU | 4 (lane 0) / 67–83 (lanes 1–3) known lane; ~350 unknown | 2 | rvsc0, rvsc1 |
-| LH, LHU | 3 (lane 0) / 85 (lane 1) known lane; ~350 unknown | 2 | rvsc0, rvsc1 |
-| SB | 7 (lane 0) / 25 (lanes 1–3) known lane; ~210 unknown | 3 | rvsc0, rvsc1 |
-| SH | 7 (lane 0) / 24 (lane 1) known lane; ~210 unknown | 3 | rvsc0, rvsc1 |
+| BLT, BGE, BLTU, BGEU | 15–17 (was 26–28) | 7 | rvsc0, rvsc1 |
+| LB, LBU | 4 (lane 0) / 67–83 (lanes 1–3) known lane; 460 unknown (was 608) | 2 | rvsc0, rvsc1 |
+| LH, LHU | 3 (lane 0) / 85 (lane 1) known lane; 532 unknown (was 680) | 2 | rvsc0, rvsc1 |
+| SB | 7 (lane 0) / 25 (lanes 1–3) known lane; 95 unknown (was 308) | 3 | rvsc0, rvsc1 |
+| SH | 7 (lane 0) / 24 (lane 1) known lane; 82 unknown (was 215) | 3 | rvsc0, rvsc1 |
 | LUI | 25 (13 fast path) | 0 | rvsc0 |
 | JAL | 5 per call site | 1 | rvsc1 |
 
-The sub-word rows are dynamic retired-instruction counts per access, measured by
-differencing a barriered loop against an empty one under `spike -g` (the static
-count is misleading here: the unknown-lane path is a *loop*, so it has fewer
-static instructions and far more dynamic ones). "Known lane" is the case
+These are dynamic retired-instruction counts per operation, measured by
+`tests/embench-iot/synthesis_cost.py`: difference a barriered loop against an
+empty one under `spike -g` (the static count is misleading here — the loops
+have few static instructions and many dynamic ones). "Known lane" is the case
 `riscv_subword_const_offset` resolves — a global, a stack slot, or a struct
-field; "unknown" is a pointer whose alignment the compiler cannot see.
+field; "unknown" is a pointer whose alignment the compiler cannot see, and is
+what the harness measures, since its probe takes the pointer as a parameter.
+
+"was" is the same harness against the commit before the decomposition/back-edge
+/identity-fold batch, so the two columns are comparable. Every row either
+improved or is unchanged; the constant-count shifts are untouched, and so is
+`slt`/`sltu` in its *value-producing* form, which still pays a full `>>31`.
+
+**The one place binary decomposition loses is a small runtime count.** It pays
+a flat five three-instruction bit tests whatever the count is, where the old
+count-down loop paid 6 per unit and exited immediately for a tiny one. Per
+operand, `x << n` went 7→17 at n=1 but 187→47 at n=31; crossover is around
+n=3. The same shows up as `sb`/`sh` lane 0 (23→47, 26→50), where the runtime
+bit offset is zero — while lane 3 went 308→95. Averaged over the lanes a
+sub-word store went 165→71, which is why this is the right trade.
 
 ### 5. Target options (`gcc/gcc/config/riscv/riscv.opt`)
 

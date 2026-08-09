@@ -45,13 +45,14 @@
   url         = {https://github.com/riscv-non-isa/riscv-elf-psabi-doc},
 }
 
-@inproceedings{hauser2020,
+@incollection{hauser2020,
   author    = {Florian Hauser and Johannes Haid and Lars Bauer and Jörg Henkel},
   title     = {A Compiler Comparison in the {RISC-V} Ecosystem},
   booktitle = {2020 International Conference on Embedded Computer Systems: Architectures, Modeling, and Simulation (SAMOS)},
   year      = {2020},
   pages     = {11--18},
   doi       = {10.1109/SAMOS49232.2020.9191411},
+  publisher = {IEEE},
 }
 
 @misc{venus,
@@ -68,13 +69,126 @@
   url    = {https://github.com/TheThirdOne/rars},
 }
 
-@inproceedings{mars,
+@incollection{mars,
   author    = {Pete Sanderson and Kenneth Vollmar},
   title     = {{MARS}: An Education-Oriented {MIPS} Assembly Language Simulator},
   booktitle = {Proceedings of the 37th SIGCSE Technical Symposium on Computer Science Education},
   year      = {2006},
   pages     = {383--387},
   doi       = {10.1145/1121341.1121409},
+  publisher = {ACM},
+  address   = {Houston, Texas, USA},
+}
+
+@incollection{massalin1987,
+  author    = {Henry Massalin},
+  title     = {Superoptimizer: A Look at the Smallest Program},
+  booktitle = {Proceedings of the Second International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS II)},
+  year      = {1987},
+  pages     = {122--126},
+  doi       = {10.1145/36206.36194},
+  publisher = {ACM},
+  address   = {Palo Alto, California, USA},
+}
+
+@incollection{granlund1992,
+  author    = {Torbjörn Granlund and Richard Kenner},
+  title     = {Eliminating Branches Using a Superoptimizer and the {GNU} {C} Compiler},
+  booktitle = {Proceedings of the ACM SIGPLAN 1992 Conference on Programming Language Design and Implementation (PLDI)},
+  year      = {1992},
+  pages     = {341--352},
+  doi       = {10.1145/143095.143146},
+  publisher = {ACM},
+  address   = {San Francisco, California, USA},
+}
+
+@incollection{bansal2006,
+  author    = {Sorav Bansal and Alex Aiken},
+  title     = {Automatic Generation of Peephole Superoptimizers},
+  booktitle = {Proceedings of the 12th International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS XII)},
+  year      = {2006},
+  pages     = {394--403},
+  doi       = {10.1145/1168857.1168906},
+  publisher = {ACM},
+  address   = {San Jose, California, USA},
+}
+
+@misc{softfloat,
+  author = {John R. Hauser},
+  title  = {Berkeley {SoftFloat}},
+  year   = {2018},
+  note   = {Release 3e},
+  url    = {http://www.jhauser.us/arithmetic/SoftFloat.html},
+}
+
+@manual{arm-rtabi,
+  author       = {{Arm Limited}},
+  title        = {Run-time {ABI} for the {Arm} Architecture},
+  organization = {Arm Limited},
+  year         = {2023},
+  note         = {Document IHI 0043},
+  url          = {https://github.com/ARM-software/abi-aa},
+}
+
+@manual{msp430-ug,
+  author       = {{Texas Instruments}},
+  title        = {{MSP430x5xx} and {MSP430x6xx} Family User's Guide},
+  organization = {Texas Instruments},
+  year         = {2020},
+  note         = {Document SLAU208},
+  url          = {https://www.ti.com/lit/pdf/slau208},
+}
+
+@manual{msp430-eabi,
+  author       = {{Texas Instruments}},
+  title        = {{MSP430} Embedded Application Binary Interface},
+  organization = {Texas Instruments},
+  year         = {2014},
+  note         = {Application report SLAA534},
+  url          = {https://www.ti.com/lit/pdf/slaa534},
+}
+
+@manual{avr-isa,
+  author       = {{Microchip Technology}},
+  title        = {{AVR} Instruction Set Manual},
+  organization = {Microchip Technology},
+  year         = {2021},
+  note         = {Document DS40002198B},
+  url          = {https://ww1.microchip.com/downloads/en/DeviceDoc/AVR-InstructionSet-Manual-DS40002198.pdf},
+}
+
+@article{urisc,
+  author  = {Farhad Mavaddat and Behrooz Parhami},
+  title   = {{URISC}: The Ultimate Reduced Instruction Set Computer},
+  journal = {International Journal of Electrical Engineering Education},
+  year    = {1988},
+  volume  = {25},
+  number  = {4},
+  pages   = {327--334},
+  doi     = {10.1177/002072098802500408},
+}
+
+@misc{subleq,
+  author = {Oleg Mazonka and Alex Kolodin},
+  title  = {A Simple Multi-Processor Computer Based on Subleq},
+  year   = {2011},
+  note   = {arXiv:1106.2593},
+  url    = {https://arxiv.org/abs/1106.2593},
+}
+
+@misc{dolan2013,
+  author = {Stephen Dolan},
+  title  = {mov is {Turing}-complete},
+  year   = {2013},
+  note   = {Computer Laboratory, University of Cambridge},
+  url    = {https://drwho.virtadpt.net/files/mov.pdf},
+}
+
+@misc{movfuscator,
+  author = {Christopher Domas},
+  title  = {The {M/o/Vfuscator}: A {C} Compiler Targeting Only the x86 {MOV} Instruction},
+  year   = {2015},
+  url    = {https://github.com/xoreaxeaxeax/movfuscator},
 }
 
 @misc{brisc-v,

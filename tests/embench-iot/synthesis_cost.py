@@ -74,6 +74,28 @@ OPS = {
  "_overhead": ("int",      "int a",                   "a",         ["int"],                  [("7",)]),
 }
 
+# Known-lane sub-word accesses.  The rows above take the object as a pointer
+# parameter, which is the case where the compiler cannot see where in its word
+# the byte sits and must compute the position at run time.  When it can see it
+# -- a global, a stack slot, a struct field -- the whole `addr & 3` chain folds
+# away, and the cost is a different order of magnitude.  Both belong in the
+# cost table, so both are measured.
+#
+# The objects are defined in the measured unit and are externally visible, so
+# GCC must actually emit the access: `static` would let it fold the load
+# against the zero initializer, and an `extern` array would defeat the point,
+# since DATA_ALIGNMENT applies only to definitions and one declared elsewhere
+# reads as byte-aligned -- back on the run-time path.
+_KDECL = "signed char kbs[64];\nunsigned char kbu[64];\nshort khs[32];\nunsigned short khu[32];\n"
+for _o in range(4):
+    OPS[f"lb_k{_o}"] = ("int", "void", f"kbs[{_o}]", [], [()], _KDECL)
+    OPS[f"lbu_k{_o}"] = ("int", "void", f"kbu[{_o}]", [], [()], _KDECL)
+    OPS[f"sb_k{_o}"] = ("void", "int v", f"kbu[{_o}]=v", ["int"], [("0xFF",)], _KDECL)
+for _o in (0, 1):
+    OPS[f"lh_k{2 * _o}"] = ("int", "void", f"khs[{_o}]", [], [()], _KDECL)
+    OPS[f"lhu_k{2 * _o}"] = ("int", "void", f"khu[{_o}]", [], [()], _KDECL)
+    OPS[f"sh_k{2 * _o}"] = ("void", "int v", f"khu[{_o}]=v", ["int"], [("0xFFFF",)], _KDECL)
+
 
 def retired(elf):
     r = subprocess.run(["spike", "-g", "--isa=rv32imac_zicsr_zifencei", PK, str(elf)],
@@ -89,7 +111,11 @@ def retired(elf):
 
 
 def measure(name, spec, operands, tmp):
-    ret, params, expr, argtypes, _ = spec
+    ret, params, expr, argtypes = spec[:4]
+    # Optional 6th field: extra declarations for the measured translation unit.
+    # The known-lane probes need the object they touch to be defined here, not
+    # passed in as a pointer -- that is the whole difference being measured.
+    pre = spec[5] if len(spec) > 5 else ""
     proto = f"{ret} op({params})"
     decls = "\n".join(f"volatile {ty} A{i};" for i, ty in enumerate(argtypes))
     inits = "\n  ".join(f"A{i} = {v};" for i, v in enumerate(operands))
@@ -111,7 +137,8 @@ int main(void){{
   exit(0);
 }}
 """
-    fn = "extern volatile int sink;\n" + f"__attribute__((noinline,noipa)) {proto} {{ {'' if ret=='void' else 'return '}{expr}; }}\n"
+    fn = ("extern volatile int sink;\n" + pre + "\n"
+          + f"__attribute__((noinline,noipa)) {proto} {{ {'' if ret=='void' else 'return '}{expr}; }}\n")
     vals = []
     for n in (100, 200):
         (tmp / f"{name}_d.c").write_text(driver)

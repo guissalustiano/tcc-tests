@@ -234,9 +234,9 @@ Both scripts honor each test's `dg-options`; without them 115 programs fail on l
 
 Two traps this cost: probing a source without its `dg-additional-options` shows a dialect failure the harness never sees, and timing a compile solo (45 s against a 120 s budget) says nothing about whether it survives a parallel sweep — the five expensive tests do not.
 
-Last full static sweep (2026-08-09): 8395 attempted, **8360 ISA-clean, zero ICEs, zero timeouts**, 35 compile errors grouped in 4 causes (`__int128` 15, `sys/mman.h` 10, x87 asm 5, `_Decimal` 5); the other 25 of the 8420 are the five `run_expensive_tests` sources, not attempted. Timeout counts are load-sensitive; ICE and violation counts are not. With `--include-unsupported` the whole 8420 compile: 8368 ok (all ISA-clean), 0 ICE, 35 front-end errors (`__int128` 15, `sys/mman.h` 10, x87 asm 5, `_Decimal` 5), 17 compile-budget timeouts in the five expensive tests.
+Last full static sweep (2026-08-09, backend `32d629dcf2e`): 8395 attempted, **8360 ISA-clean, zero ICEs, zero timeouts**, 35 compile errors grouped in 4 causes (`__int128` 15, `sys/mman.h` 10, x87 asm 5, `_Decimal` 5); the other 25 of the 8420 are the five `run_expensive_tests` sources, not attempted. Timeout counts are load-sensitive; ICE and violation counts are not. With `--include-unsupported` the whole 8420 compile: 8368 ok (all ISA-clean), 0 ICE, 35 front-end errors (`__int128` 15, `sys/mman.h` 10, x87 asm 5, `_Decimal` 5), 17 compile-budget timeouts in the five expensive tests.
 
-Last full behavioral sweep (2026-08-09): **8345/8420 passed, 0 failed**, 75 skipped (13 sources × 5 skipped by unmet `dg-require-effective-target`, plus 2 × 5 that do not compile; uniform 15 per level). These are the numbers `main.typ` reports.
+Last full behavioral sweep (2026-08-09, backend `32d629dcf2e`): **8345/8420 passed, 0 failed**, 75 skipped (13 sources × 5 skipped by unmet `dg-require-effective-target`, plus 2 × 5 that do not compile; uniform 15 per level). These are the numbers `main.typ` reports. Both sweeps were re-run after the sub-word/shift batch landed and came back identical, `torture-behav-failures.txt` byte-for-byte included; rvsc0 was rebuilt and re-checked in the same round (60/60 ISA, 45/45 behavioral).
 
 For quick manual checks:
 
@@ -266,6 +266,15 @@ Compile with:
 ```sh
 typst compile main.typ
 ```
+
+**The Embench numbers are not typed into the document.** `figures/embench.typ`
+reads `tests/embench-iot/{size,perf}.csv` at compile time and builds
+`@tbl-embench-size`, `@tbl-embench-perf`, `@fig-embench-overhead`, the geometric
+means quoted in the prose, and the backend-revision stamp in each caption (from
+the provenance comment the harness writes on line 1 of each CSV). Re-running
+`just size` and `just perf` under `tests/embench-iot/` and recompiling is the
+whole update procedure. Prose that compares against an *earlier* edition of the
+measurement is still hand-written, since the CSVs only hold the current one.
 
 Chapter structure:
 1. Introduction — motivation (PCS3225 course at USP), objectives, rationale
@@ -351,10 +360,10 @@ The core of all instruction synthesis. Key patterns:
 | SLTU | 48 | 4 | rvsc0, rvsc1 |
 | BNE | 3 | 1 | rvsc0, rvsc1 |
 | BLT, BGE, BLTU, BGEU | 15–17 (was 26–28) | 7 | rvsc0, rvsc1 |
-| LB, LBU | 4 (lane 0) / 67–83 (lanes 1–3) known lane; 460 unknown (was 608) | 2 | rvsc0, rvsc1 |
-| LH, LHU | 3 (lane 0) / 85 (lane 1) known lane; 532 unknown (was 680) | 2 | rvsc0, rvsc1 |
-| SB | 7 (lane 0) / 25 (lanes 1–3) known lane; 95 unknown (was 308) | 3 | rvsc0, rvsc1 |
-| SH | 7 (lane 0) / 24 (lane 1) known lane; 82 unknown (was 215) | 3 | rvsc0, rvsc1 |
+| LB, LBU | 2–6 (lane 0) / 57–77 (lanes 1–3) known lane; 460 unknown (was 608) | 2 | rvsc0, rvsc1 |
+| LH, LHU | 3–7 (lane 0) / 81–85 (lane 2) known lane; 532 unknown (was 680) | 2 | rvsc0, rvsc1 |
+| SB | 6 (lane 0) / 16–32 (lanes 1–3) known lane; 95 unknown (was 308) | 3 | rvsc0, rvsc1 |
+| SH | 7 (lane 0) / 23 (lane 2) known lane; 82 unknown (was 215) | 3 | rvsc0, rvsc1 |
 | LUI | 25 (13 fast path) | 0 | rvsc0 |
 | JAL | 5 per call site | 1 | rvsc1 |
 
@@ -363,8 +372,14 @@ These are dynamic retired-instruction counts per operation, measured by
 empty one under `spike -g` (the static count is misleading here — the loops
 have few static instructions and many dynamic ones). "Known lane" is the case
 `riscv_subword_const_offset` resolves — a global, a stack slot, or a struct
-field; "unknown" is a pointer whose alignment the compiler cannot see, and is
-what the harness measures, since its probe takes the pointer as a parameter.
+field; "unknown" is a pointer whose alignment the compiler cannot see. Both are
+measured: the `lb`/`sb`/… probes pass the address in as a parameter (unknown),
+and the `lb_k0`…`sh_k2` probes read or write an externally visible global
+defined in the measured unit (known). That object has to be defined there *and*
+externally visible — `static` lets GCC fold the load against the zero
+initializer, and an `extern` array reads as byte-aligned (DATA_ALIGNMENT
+applies only to definitions), which puts the probe back on the run-time path
+and measures nothing new.
 
 "was" is the same harness against the commit before the decomposition/back-edge
 /identity-fold batch, so the two columns are comparable. Every row either

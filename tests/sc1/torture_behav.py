@@ -58,97 +58,94 @@ REPORT_PATH     = SCRIPT_DIR / "torture-behav-failures.txt"
 # that Spike exceeds SPIKE_TIMEOUT even on an unloaded machine.
 KNOWN_SLOW: set[tuple[str, str]] = set()
 
-# Tests that are out of scope regardless of opt level: upstream-flagged
-# "expensive" tests that blow COMPILE_TIMEOUT on their own, tests using GCC
-# extensions unsupported on this freestanding 32-bit target (_Decimal*), and
-# tests using host-architecture-specific inline asm (x87). Shared with
-# torture_isa.py (imported from here) since none of these compile regardless
-# of which downstream check consumes the result.
-KNOWN_UNSUPPORTED: set[str] = {
-    # Expensive tests (upstream dg-require-effective-target run_expensive_tests /
-    # high dg-timeout-factor): compile time alone exceeds COMPILE_TIMEOUT.
-    "memclr.c",
-    "memcpy-a1.c",
-    "memcpy-a2.c",
-    "memcpy-a4.c",
-    "memcpy-a8.c",
-    # Decimal floating point (_Decimal32/64/128): unsupported GCC extension.
-    "pr80692.c",
-    # x86-specific inline asm (st(1) x87 register): not applicable to RISC-V.
-    "990413-2.c",
-    # __int128 (TImode) unconditionally: GCC only supports a scalar integer
-    # mode when its width is 2*BITS_PER_WORD (the middle end's built-in
-    # "double word" support). On rv32, 2*32=64, not 128, so __int128 is
-    # rejected outright -- true of upstream rv32 GCC in general, not
-    # specific to sc1's restricted instruction set.
-    "pr93213.c",
-    "pr84748.c",
-    "pr105613.c",
-    # printf/sprintf/fprintf/vfprintf family: the linked libc.a's stdio
-    # wrappers call internal reentrant symbols (_vfprintf_r, _svfprintf_r,
-    # _vfiprintf_r, plain vfprintf for the _chk variants) that aren't defined
-    # in this newlib build -- a newlib build/link configuration gap, not an
-    # sc1 ISA limitation. Every test that calls any *printf variant fails to
-    # link with the same undefined-reference error.
-    "20020406-1.c",
-    "20021120-3.c",
-    "20070201-1.c",
-    "20121108-1.c",
-    "920501-8.c",
-    "920501-9.c",
-    "920726-1.c",
-    "930513-1.c",
-    "941014-2.c",
-    "980605-1.c",
-    "fprintf-1.c",
-    "fprintf-2.c",
-    "fprintf-chk-1.c",
-    "gofast.c",
-    "memchr-1.c",
-    "pr111863-1.c",
-    "pr58831.c",
-    "pr69691.c",
-    "pr71550.c",
-    "pr78586.c",
-    "pr78622.c",
-    "pr79286.c",
-    "pr79327.c",
-    "printf-1.c",
-    "printf-2.c",
-    "printf-chk-1.c",
-    "return-addr.c",
-    "strlen-2.c",
-    "strlen-3.c",
-    "strlen-4.c",
-    "strlen-5.c",
-    "strlen-6.c",
-    "struct-ret-1.c",
-    "user-printf.c",
-    "va-arg-21.c",
-    "va-arg-24.c",
-    "vfprintf-1.c",
-    "vfprintf-chk-1.c",
-    "vprintf-1.c",
-    "vprintf-chk-1.c",
-    # libm math functions (pow, floor, ...) undefined: no libm linked/built
-    # for this target -- another build configuration gap, not ISA-related.
-    "980709-1.c",
-    "float-floor.c",
-    # Requires a C99 math runtime, which this target does not have; upstream
-    # guards it with "dg-require-effective-target c99_runtime", a directive
-    # this harness does not parse (it reads dg-options only). The test checks
-    # that GCC narrows sin(double)->sinf and floor(double)->floorf for float
-    # arguments, and defines weak floor/sinf that abort if the narrowing did
-    # not happen. Without a C99 runtime GCC correctly declines to narrow, so
-    # the weak floor runs and aborts at -O1 and -Os. At -O2/-O3 the calls are
-    # constant-folded away and it passes, and at -O0 the body is #ifdef'd out
-    # by __OPTIMIZE__ -- so the pass/fail split tracks folding, not synthesis.
-    "20030125-1.c",
-    # sys/mman.h (mmap) unavailable on this freestanding/bare-metal newlib
-    # target.
-    "loop-2f.c",
-    "loop-2g.c",
+# --- What this target provides, as the test suite describes requirements -----
+#
+# gcc.c-torture sources declare their prerequisites with
+# "{ dg-require-effective-target NAME }", and DejaGnu skips a test whose
+# prerequisites the target does not meet.  This harness reads those directives
+# so the skip set is *derived from the sources* rather than hand-maintained.
+#
+# That matters because the hand-maintained version decayed badly: it reached 55
+# sources, 42 of which were excluded for reasons that had stopped being true or
+# were never true, and ~210 passing combinations went unmeasured until someone
+# re-tested the reasons.  A table of target properties goes stale far more
+# visibly than a list of file names, and one entry here replaces many there.
+#
+# Absent: the property genuinely does not hold for this configuration.  Each
+# entry carries the evidence, not an assumption.
+EFFECTIVE_TARGET_ABSENT: dict[str, str] = {
+    "run_expensive_tests": (
+        "opt-in upstream too; these blow COMPILE_TIMEOUT under sweep load"),
+    "int128": (
+        "GCC gives a scalar integer mode only at 2*BITS_PER_WORD, so rv32 tops "
+        "out at 64 bits -- true of upstream rv32 GCC, not of sc1"),
+    "mmap": "no sys/mman.h in this freestanding newlib",
+    "dfp": "decimal floating point unsupported on this target",
+    "dfprt": "decimal floating point runtime unsupported on this target",
+    "c99_runtime": (
+        "GCC itself treats this target as lacking one: it declines to narrow "
+        "floor(double) to floorf for a float argument, which is exactly what "
+        "20030125-1.c checks, and a stock rv32i toolchain declines identically"),
 }
+
+# Present: verified, in every case by the tests that declare it passing at all
+# five optimization levels.  Listed rather than assumed so that a name appearing
+# in neither table is reported instead of being silently taken one way.
+EFFECTIVE_TARGET_PRESENT: frozenset[str] = frozenset({
+    "double64plus", "fileio", "indirect_calls", "indirect_jumps", "int32",
+    "int32plus", "label_values", "longlong64", "return_address",
+    "stdint_types", "trampolines", "untyped_assembly", "unwrapped",
+})
+
+# Sources to skip regardless of what they declare.  Empty, and it should stay
+# that way: an entry here is a claim no directive backs, so it has to be
+# justified in a comment and re-verified whenever the toolchain changes.  The
+# two sources that need skipping but carry no dg-require-effective-target
+# (pr105613.c for __int128, 990413-2.c for x87 asm) are deliberately not listed
+# -- they fail to compile, and the harness already groups compile failures by
+# cause, which says more than an entry here would.
+KNOWN_UNSUPPORTED: set[str] = set()
+
+_DG_REQUIRE_RE = re.compile(
+    r"\{\s*dg-require-effective-target\s+([A-Za-z0-9_]+)")
+
+
+def get_required_effective_targets(src: Path) -> list[str]:
+    """Effective-target names the source declares it needs."""
+    names: list[str] = []
+    try:
+        with open(src, encoding="latin-1") as f:
+            for line in f:
+                for m in _DG_REQUIRE_RE.finditer(line):
+                    if m.group(1) not in names:
+                        names.append(m.group(1))
+    except OSError:
+        pass
+    return names
+
+
+def unmet_requirement(src: Path) -> tuple[str, str] | None:
+    """(name, reason) of the first declared requirement this target lacks."""
+    for name in get_required_effective_targets(src):
+        if name in EFFECTIVE_TARGET_ABSENT:
+            return name, EFFECTIVE_TARGET_ABSENT[name]
+    return None
+
+
+def unknown_requirements(srcs) -> dict[str, list[str]]:
+    """Declared effective targets classified by neither table, by name.
+
+    Treated as present -- the test runs -- so an unrecognised name can only
+    ever cost a visible failure, never a silent skip.  Reported so it gets a
+    verdict rather than staying unclassified.
+    """
+    unknown: dict[str, list[str]] = defaultdict(list)
+    for src in srcs:
+        for name in get_required_effective_targets(src):
+            if (name not in EFFECTIVE_TARGET_ABSENT
+                    and name not in EFFECTIVE_TARGET_PRESENT):
+                unknown[name].append(src.name)
+    return dict(unknown)
 
 
 # A register dump line from pk's trap report ("z  00000000 ra 00010054 …",
@@ -291,8 +288,12 @@ def get_dg_options(src: Path) -> list[str]:
 def try_compile_link(compiler: str, src: Path, opt: str, out: Path,
                      extra_flags: list[str] | None = None) -> CompileResult:
     """Compile+link src → out ELF, classifying how the compiler ended."""
+    # -lm: libm is built and installed for this target, so the handful of tests
+    # calling floor/pow link like any other.  It is unconditional because an
+    # unreferenced archive contributes nothing, and making it conditional on
+    # the source would just be a second list to keep in step with reality.
     cmd = [compiler, opt] + (extra_flags or []) + [
-        "-T", str(LD_SCRIPT), str(src), "-lsim", "-o", str(out)
+        "-T", str(LD_SCRIPT), str(src), "-lsim", "-lm", "-o", str(out)
     ]
     res = run_compiler(cmd, COMPILE_TIMEOUT)
     if not res.ok:
@@ -366,11 +367,27 @@ def main() -> None:
 
     src_list = list(map(Path, sources))
     dg_opts_by_src = {src: get_dg_options(src) for src in src_list}
+
+    # Requirements the target does not meet, read from the sources themselves.
+    unmet_by_src = {src: unmet_requirement(src) for src in src_list}
+
+    unknown = unknown_requirements(src_list)
+    if unknown:
+        print("note: effective targets declared by the suite but classified by "
+              "neither table in this harness; treated as present, so these "
+              "tests run:")
+        for name in sorted(unknown):
+            srcs = unknown[name]
+            shown = ", ".join(sorted(srcs)[:4]) + (" ..." if len(srcs) > 4 else "")
+            print(f"  {name:<24}{len(srcs)} source(s): {shown}")
+        print()
+
+    def excluded(src: Path, opt: str) -> bool:
+        return (src.name, opt) in KNOWN_SLOW or bool(unmet_by_src[src])
+
     total_pairs = len(src_list) * len(opts)
     all_pairs = [(src, opt) for src in src_list for opt in opts]
-    items = [(src, opt) for src, opt in all_pairs
-             if (src.name, opt) not in KNOWN_SLOW
-             and src.name not in KNOWN_UNSUPPORTED]
+    items = [(src, opt) for src, opt in all_pairs if not excluded(src, opt)]
     skipped = total_pairs - len(items)
     passed = failed = 0
 
@@ -378,8 +395,22 @@ def main() -> None:
     # The up-front exclusions are attributed here; the rest accrue below.
     per_opt = {opt: {"passed": 0, "skipped": 0, "failed": 0} for opt in opts}
     for src, opt in all_pairs:
-        if (src.name, opt) in KNOWN_SLOW or src.name in KNOWN_UNSUPPORTED:
+        if excluded(src, opt):
             per_opt[opt]["skipped"] += 1
+
+    by_requirement: dict[str, list[str]] = defaultdict(list)
+    for src, unmet in unmet_by_src.items():
+        if unmet:
+            by_requirement[unmet[0]].append(src.name)
+    if by_requirement:
+        n = sum(len(v) for v in by_requirement.values())
+        print(f"skipping {n} source(s) x {len(opts)} levels: "
+              f"dg-require-effective-target this configuration does not meet")
+        for name in sorted(by_requirement):
+            srcs = sorted(by_requirement[name])
+            print(f"  {name} ({len(srcs)}) — {EFFECTIVE_TARGET_ABSENT[name]}")
+            print(f"      {', '.join(srcs)}")
+        print()
 
     collected: list[Result] = []
     with tempfile.TemporaryDirectory() as _tmp:

@@ -41,13 +41,18 @@ install:
 newlib_src      := justfile_directory() + "/../../newlib-src"
 newlib_build_dir := justfile_directory() + "/build-newlib"
 
+# --enable-newlib-io-c99-formats: newlib compiles the "hh" and "ll" length
+# modifiers only under _WANT_IO_C99_FORMATS.  Without it printf("%hhd", 4105)
+# prints 4105 instead of 9, which is a silent conformance gap rather than an
+# error, and it is what kept gcc.c-torture's pr78622.c excluded.
 configure-newlib:
     mkdir -p {{newlib_build_dir}}
     cd {{newlib_build_dir}} && PATH="{{prefix}}/bin:$PATH" {{newlib_src}}/configure \
         --target={{target}} \
         --prefix={{prefix}} \
         --disable-multilib \
-        --disable-newlib-supplied-syscalls
+        --disable-newlib-supplied-syscalls \
+        --enable-newlib-io-c99-formats
 
 build-newlib:
     cd {{newlib_build_dir}} && PATH="{{prefix}}/bin:$PATH" make -j$(nproc) CFLAGS_FOR_TARGET="-g -O1 -fno-builtin"

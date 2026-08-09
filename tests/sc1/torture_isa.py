@@ -25,7 +25,19 @@ from common import (
     find_tool,
     print_grouped,
 )
-from torture_behav import KNOWN_UNSUPPORTED, get_dg_options
+from torture_behav import (
+    KNOWN_UNSUPPORTED,
+    get_dg_options,
+    get_required_effective_targets,
+)
+
+# Effective targets whose absence stops a source *compiling* -- the only kind
+# that matters here.  This check disassembles an object file, so it does not
+# care whether the target can run the program afterwards: a test needing a
+# filesystem, or a C99 math runtime, still compiles and its mnemonics are still
+# worth checking.  Skipping those, as the behavioral sweep must, would throw
+# away ISA coverage for no reason.  What is left is the compile budget.
+COMPILE_SCOPE_REQUIREMENTS = frozenset({"run_expensive_tests"})
 
 SCRIPT_DIR  = Path(__file__).parent
 TORTURE_DIR = SCRIPT_DIR.parent.parent / "gcc" / "gcc" / "testsuite" / "gcc.c-torture" / "execute"
@@ -85,8 +97,8 @@ def main() -> None:
     parser.add_argument("-j", "--jobs", type=int, default=None, metavar="N",
                         help="Parallel workers (default: os.cpu_count())")
     parser.add_argument("--include-unsupported", action="store_true",
-                        help="Also compile the KNOWN_UNSUPPORTED tests: they are "
-                             "excluded by default because they cannot link, but "
+                        help="Also compile the sources excluded for exceeding "
+                             "the compile budget; slow and load-sensitive, but "
                              "they can still reveal an ICE")
     parser.add_argument("--files-per-group", type=int, default=8, metavar="N",
                         help="Max files listed per group before eliding (default: 8)")
@@ -105,8 +117,14 @@ def main() -> None:
 
     src_list = list(map(Path, sources))
     excluded = 0
+    def out_of_compile_scope(src) -> bool:
+        if src.name in KNOWN_UNSUPPORTED:
+            return True
+        return any(name in COMPILE_SCOPE_REQUIREMENTS
+                   for name in get_required_effective_targets(src))
+
     if not args.include_unsupported:
-        kept = [s for s in src_list if s.name not in KNOWN_UNSUPPORTED]
+        kept = [s for s in src_list if not out_of_compile_scope(s)]
         excluded = (len(src_list) - len(kept)) * len(opts)
         src_list = kept
 
@@ -142,7 +160,7 @@ def main() -> None:
     print(f"\n{len(items)} compiles: {compiled} ok · {len(ices)} ICE · "
           f"{len(errors)} error · {len(timeouts)} timeout")
     if excluded:
-        print(f"{excluded} not attempted (KNOWN_UNSUPPORTED; "
+        print(f"{excluded} not attempted (exceed the compile budget; "
               f"--include-unsupported to scan them)")
     print(f"ISA compliance: {len(clean)}/{compiled} clean, {len(violating)} violating")
 

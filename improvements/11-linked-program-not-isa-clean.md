@@ -1,8 +1,15 @@
 # A linked sc1 program is not ISA-clean, even though every compiled object is
 
-> **STATUS: characterised, checked, and partly fixed.** The check now exists
-> (`tests/sc1/linked_isa.py`, `just linked-isa`) and §7 states the two claims
-> separately. What remains open is one concrete newlib rebuild, described at the end.
+> **STATUS: fixed.** The check exists (`tests/sc1/linked_isa.py`, `just linked-isa`),
+> and the newlib rebuild described at the end of this block has been done:
+> `newlib/libc/machine/rvsc` now holds `setjmp.S` alone (plus `ieeefp.c`/`ffs.c`
+> wrappers), so `memset`, `memcpy`, `memmove` and `strcmp` come from `libc/string`
+> as ordinary C. The linked binary's hand-written partition is down to `_start`
+> and the `ecall` stubs. One correction to the plan below: **`setjmp.S` was not
+> already sc1-legal.** `longjmp` returns via `seqz`, a pseudo for `sltiu`; copying
+> it unchanged would have kept a violation. It is rewritten with `beq`. Also,
+> automake 1.15.1 (not 1.18.1, and not the 1.16.5 in nixpkgs) is required —
+> see CLAUDE.md.
 >
 > **Cause 1 was wrong.** This write-up blamed `auipc` on middle-end libcalls. It is not a
 > backend gap: the compiler emits `lui`+`jalr` for libcalls at every optimization level,

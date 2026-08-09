@@ -12,10 +12,11 @@ Everything lives under `/home/salust/p/scgcc/` (the git repo root):
 | `gcc/gcc/config/config.gcc` | Triple mapping: `rvscN-*-elf*` → `cpu_type=riscv` |
 | `gcc/gcc/config/config.sub` | Triple normalisation: recognises `rvscN` CPU names |
 | `binutils-gdb/` | GNU Binutils source (untracked; assembler + linker) |
+| `newlib-src/` | Newlib + libgloss source (untracked, own git/jj repo; libc + crt0 + syscall stubs) |
 | `tests/` | Build/test workspace — one subdir per target (`sc0`–`sc2`) |
-| `tests/scN/` | Per-target subdir — `justfile`, `build/`, `build-binutils/`, `build/install/`, `tests/` |
+| `tests/scN/` | Per-target subdir — `justfile`, `build/`, `build-binutils/`, `build-newlib/`, `build/install/`, `tests/` |
 | `tests/sc1/tests/` | sc1 test sources — `isa/` (mnemonic allowlist) and `behav/` (run on Spike) |
-| `tests/common.just` | Shared justfile recipes (configure, build, install for both binutils and gcc) |
+| `tests/common.just` | Shared justfile recipes (configure, build, install for binutils, gcc, newlib, libgcc) |
 | `main.typ` | Typst academic document (TCC at USP/Poli) |
 
 **Source edits happen in `gcc/gcc/config/riscv/`.** Build directories are never edited directly. Files actually modified for this project: `riscv.md`, `riscv.opt`, `riscv.cc` (constant-legitimacy/synthesis hooks), `predicates.md` (`splittable_const_int_operand`), `rvscN.h` headers (sc1–sc7), `gcc/gcc/config/config.gcc`, `gcc/gcc/config/config.sub`.
@@ -60,9 +61,30 @@ cd tests/sc1/build && make all-gcc -j$(nproc) && make install-gcc
 
 Replace `sc1` with the desired target number. The installed toolchain lands at `tests/scN/build/install/bin/`.
 
+### Newlib
+
+`just setup` continues into newlib and libgcc (`configure-newlib build-newlib install-newlib build-libgcc install-libgcc`). Only sc1 and sc2 have newlib built; sc0 cannot use it at all (no `jalr`, so no `_start` → `main` call, and pk is out of reach). `configure-newlib` passes `--enable-newlib-io-c99-formats`, without which newlib silently ignores the `hh`/`ll` printf length modifiers (`printf("%hhd", 4105)` prints `4105`, not `9`).
+
+**Host file I/O under pk needs a libgloss fix that lives in this fork.** newlib's `O_*` are the BSD values, but the syscalls go to a Linux-ABI implementation (pk, or spike's frontend server) that decodes the asm-generic ones — newlib's `O_CREAT` is `0x200`, which the other side reads as `O_TRUNC`. Passing the word through unconverted turns `fopen(path, "w")` into an open of an already-existing file, failing with ENOENT on anything new. `__syscall_open_flags` in `libgloss/riscv/internal_syscall.h` converts bit by bit (so an unmapped flag is dropped, not silently reinterpreted) and is applied in `sys_open.c` and `sys_openat.c`. That header is included by every riscv syscall stub, so it carries its own `<fcntl.h>`.
+
+The `rvsc*` triples get **their own newlib machine directory**, `newlib/libc/machine/rvsc`, rather than sharing `libc/machine/riscv`. The RISC-V one supplies `memset`/`memcpy`/`memmove`/`strcmp` as hand-written assembly, which never passes through the machine description and so ignores every `-mno-*` flag — the same defect class as the old libgcc `div.S`. The rvsc directory keeps only `setjmp.S` (no generic C equivalent exists) plus one-line wrappers for `ieeefp.c` and `ffs.c` (`ffs` has no `libc/string` implementation), and symlinks `machine/` and `sys/` at the riscv ones; everything else comes from generic C in `libc/string`. `libm_machine_dir` stays `riscv` — that directory is all C.
+
+`libc/machine/rvsc/setjmp.S` is a copy of the riscv one with one change: upstream's `longjmp` returns via `seqz` (a pseudo for `sltiu`), which sc1 lacks, so it uses `beq` instead. Keep any edit inside the sc1 ten-instruction subset — `linked_isa.py` has no exemption for it.
+
+**Regenerating newlib's build files.** After editing any `Makefile.inc`, `configure.host`, or `libc/acinclude.m4`, regenerate with the exact versions the tree was generated with, or the diff becomes a whole-file rewrite that does not build (automake 1.16 mis-handles the `MATHOBJS_IN_LIBC` rule):
+
+```sh
+# automake 1.15.1 is not in nixpkgs; build it once from the GNU tarball
+cd newlib-src/newlib
+PATH="/path/to/automake-1.15.1/bin:$(nix-build '<nixpkgs>' -A autoconf269 --no-out-link)/bin:$PATH" \
+  sh -c 'aclocal -I . -I .. -I ../config && automake --foreign && autoconf'
+```
+
+Note that the imported `Makefile.in` was already stale against its own sources (it listed a `libc/sys/xtensa` that the snapshot does not contain); commit `newlib: regenerate Makefile.in with automake 1.15.1` is that cleanup on its own, so later regenerations diff cleanly.
+
 ## Testing
 
-Three independent layers verify correctness: hand-written ISA compliance (static mnemonic allowlist), hand-written behavioral tests (self-validating, run on Spike), and the GCC torture suite (both checks over 1684 upstream programs, rvsc1 only).
+Three independent layers verify correctness: hand-written ISA compliance (static mnemonic allowlist), hand-written behavioral tests (self-validating, run on Spike), and the GCC torture suite (both checks over 1684 upstream programs, rvsc1 only). A fourth check, `linked-isa`, reapplies the allowlist to the linked ELF rather than to compiler output.
 
 ### ISA compliance (`tests/isa/*.c`)
 
@@ -117,6 +139,16 @@ cd tests/sc2 && just reject   # or `just`, which runs `test` then `reject`
 | `ecall`, `ebreak` | accepted — **not** rejected | RV32I base mnemonics; `__builtin_trap` expands to `ebreak` |
 
 The ordering probes are each compiled a second time with `-mfence` and only pass if the fence appears then — a probe that quietly stopped generating fences would otherwise pass vacuously. (This caught a bad first probe: `asm volatile("" ::: "memory")` is a compiler barrier and never emits a hardware fence.) The `ecall`/`ebreak` cases assert the mnemonic *is* present: that group is a documented limitation in `main.typ`, and the test fails if the toolchain starts suppressing it, keeping document and behavior in step.
+
+### Linked-program ISA compliance (`tests/sc1/linked_isa.py` — rvsc1 only)
+
+```sh
+cd tests/sc1 && just linked-isa
+```
+
+`main.py` and `torture_isa.py` disassemble what the *compiler* produced; this disassembles the whole linked ELF, so it also covers libgcc, newlib and libgloss — the gap that let libgcc's hand-written `div.S`/`muldi3.S` ship native `slli`/`srli` unnoticed, and later newlib's assembly `memset`. Spike cannot catch either, since it runs with the wide `--isa` pk needs.
+
+Results are split in two: **program + compiler-generated libraries** (libgcc included) must be fully clean, and any violation there is a defect; **hand-written runtime** is the `RUNTIME_EXEMPT` allowlist, reported separately with a per-symbol reason rather than silently ignored. That second partition is now only `_start` (crt0) and the libgloss `ecall` stubs — `ecall` being unavoidable for a program talking to a host. Do not add exemptions to make the check pass; the newlib entries were removed by fixing newlib, not by exempting it.
 
 ### Behavioral tests (`tests/behav/*.c` — rvsc1 only)
 
@@ -174,15 +206,37 @@ Both scripts classify compile failures instead of folding them into a silent ski
 
 Failures are grouped by root cause — ICE crash location, or the first diagnostic line — so one backend bug prints as one entry rather than as the dozens of (test, opt) pairs it affects. The shared classification lives in `tests/common.py` (`CompileStatus`, `classify_compile`, `run_compiler`, `print_grouped`); `run_compiler` uses `communicate()` rather than `wait()`, because a compiler emitting more than the ~64 KB pipe buffer otherwise blocks forever and is misreported as a timeout — which is exactly what an ICE dumping RTL does.
 
-`torture_isa.py` flags: `-j N` (parallel, defaults to `nproc`), `--opt=-O2` (repeatable — needs the `=` form, since argparse reads a bare `-O2` as a flag), `--include-unsupported` (also compile the `KNOWN_UNSUPPORTED` sources; they cannot link but can still reveal an ICE), `--files-per-group N`.
+`torture_isa.py` flags: `-j N` (parallel, defaults to `nproc`), `--opt=-O2` (repeatable — needs the `=` form, since argparse reads a bare `-O2` as a flag), `--include-unsupported` (also compile the compile-budget sources; slow and load-sensitive, but they can still reveal an ICE), `--files-per-group N`.
 
 A full `just torture-behav` sweep persists its failures to `tests/sc1/torture-behav-failures.txt`, which is committed. Runtime failures are grouped by a signature derived from how the program died — exit code or fatal signal, plus the first non-register-dump line pk/spike printed with addresses normalised to `<addr>` — so one fault reads as one entry. The file carries no timestamps and orders everything deterministically, so two sweeps of the same toolchain diff cleanly; compile-level skips are counted but not listed, since the compile-budget timeouts among them are load-sensitive and would churn the diff. `SPIKE_TIMEOUT` is deliberately generous (900 s) for the same reason: the slowest correct test, `memcpy-2.c` at `-O0`, retires 1.05e9 instructions and needs ~85 s of Spike alone, but the sweep runs many Spike instances at once, and at the previous 300 s budget it sat close enough to the line to flip between runs on load alone — producing a "failure" with no toolchain change behind it. The header also records a per-opt-level passed/skipped/failed breakdown, which is what `main.typ`'s `@tbl-torture-results` prints — a bare total cannot be split back apart. A partial run (explicit sources or `--opt`) does not overwrite the record; pass `--report PATH` to write elsewhere or `--no-report` to suppress it.
 
-`KNOWN_UNSUPPORTED` (in `torture_behav.py`, imported by `torture_isa.py`) excludes sources that fail for reasons unrelated to sc1: printf-family link gaps, libm, `sys/mman.h`, `_Decimal`, x87 asm, `__int128`, and five upstream "expensive" tests. Both scripts honor each test's `dg-options`; without them 115 programs fail on language dialect (mostly `-std=gnu89`) rather than on anything sc1-related.
+**The skip set is derived, not curated.** `torture_behav.py` reads each source's `{ dg-require-effective-target NAME }` and skips the test when this configuration does not provide NAME — the same rule DejaGnu applies. What is maintained is a table of target properties, not a list of files:
 
-Last full static sweep (2026-08-08): 8145 attempted, **8145 ISA-clean, zero ICEs, zero errors, zero timeouts**; the other 275 of the 8420 are the `KNOWN_UNSUPPORTED` exclusions (55 sources × 5), not attempted. Timeout counts are load-sensitive; ICE and violation counts are not.
+- `EFFECTIVE_TARGET_ABSENT` — 6 entries with the evidence for each: `run_expensive_tests`, `int128`, `mmap`, `dfp`, `dfprt`, `c99_runtime`.
+- `EFFECTIVE_TARGET_PRESENT` — 13 names, each verified by the tests declaring it passing at all five levels.
+- A name in neither table is **treated as present (the test runs) and reported**, so an unrecognised prerequisite can cost a visible failure but never a silent skip. The two tables currently cover all 19 names `gcc.c-torture/execute` uses.
 
-Last full behavioral sweep (2026-08-08): **8142/8420 passed, 0 failed**, 278 skipped (55 up-front exclusions × 5 levels, plus the three `sprintf` sources that only fail to link at `-O0`). These are the numbers `main.typ` reports.
+`KNOWN_UNSUPPORTED` still exists as an escape hatch but is **empty, and should stay that way** — an entry there is a claim no directive backs. Sources that must not run but declare nothing (`pr105613.c`, `990413-2.c`) simply fail to compile and are grouped by cause, which says more than an exclusion would.
+
+`torture_isa.py` deliberately uses a *narrower* scope: `COMPILE_SCOPE_REQUIREMENTS`, currently just `run_expensive_tests`. A static mnemonic check disassembles an object and never runs the program, so a test needing a filesystem or a C99 math runtime still compiles and is still worth checking; skipping those there would discard ISA coverage for nothing.
+
+Both scripts honor each test's `dg-options`; without them 115 programs fail on language dialect (mostly `-std=gnu89`).
+
+**History, because it cost real coverage.** The list was 55 hand-maintained sources until 2026-08-09; 42 were excluded for reasons that had stopped being true or were never true, hiding ~210 passing combinations:
+
+| Was excluded as | Actually | Fix |
+|---|---|---|
+| printf family fails to link (35) | stale installed `libc.a`, not newlib | rebuild newlib from scratch |
+| no filesystem behind pk (3) | libgloss passed newlib's BSD `O_*` to a Linux-ABI syscall; `O_CREAT` 0x200 read as `O_TRUNC` | `__syscall_open_flags` in `libgloss/riscv/internal_syscall.h` |
+| no libm built (2) | `libm.a` was built and installed all along | `-lm` in the harness link line |
+| `%hh` unsupported (1) | gated on `_WANT_IO_C99_FORMATS` | `--enable-newlib-io-c99-formats` in `common.just` |
+| `__int128` misgrouped (1) | genuinely unsupported, wrong category | falls out as a compile error |
+
+Two traps this cost: probing a source without its `dg-additional-options` shows a dialect failure the harness never sees, and timing a compile solo (45 s against a 120 s budget) says nothing about whether it survives a parallel sweep — the five expensive tests do not.
+
+Last full static sweep (2026-08-09): 8395 attempted, **8360 ISA-clean, zero ICEs, zero timeouts**, 35 compile errors grouped in 4 causes (`__int128` 15, `sys/mman.h` 10, x87 asm 5, `_Decimal` 5); the other 25 of the 8420 are the five `run_expensive_tests` sources, not attempted. Timeout counts are load-sensitive; ICE and violation counts are not. With `--include-unsupported` the whole 8420 compile: 8368 ok (all ISA-clean), 0 ICE, 35 front-end errors (`__int128` 15, `sys/mman.h` 10, x87 asm 5, `_Decimal` 5), 17 compile-budget timeouts in the five expensive tests.
+
+Last full behavioral sweep (2026-08-09): **8345/8420 passed, 0 failed**, 75 skipped (13 sources × 5 skipped by unmet `dg-require-effective-target`, plus 2 × 5 that do not compile; uniform 15 per level). These are the numbers `main.typ` reports.
 
 For quick manual checks:
 

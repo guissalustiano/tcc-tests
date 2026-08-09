@@ -17,19 +17,19 @@ because they are different claims and only the first is fully established:
       instructions.  Any violation here is a defect.
 
   hand-written runtime
-      crt0, the newlib syscall stubs, and newlib's assembly string routines.
-      These are hand-written assembly that never passes through the machine
-      description, so -mno-shift and friends have no effect on them.  They are
-      listed explicitly below with a reason each, and reported separately rather
-      than silently ignored.
+      crt0 and the newlib syscall stubs.  These are hand-written assembly that
+      never passes through the machine description, so -mno-shift and friends
+      have no effect on them.  They are listed explicitly below with a reason
+      each, and reported separately rather than silently ignored.
 
-The runtime exemptions are not a statement that the code is fine.  `ecall` is
-genuinely unavoidable for a program that talks to a host -- a bare-metal sc1
-processor has nothing to make a syscall to, which is why rvsc0's own harness
-runs without libc at all -- but newlib's memset and friends are the same kind of
-defect as the libgcc one, and are exempt only because fixing them means
-rebuilding newlib with its machine directory disabled, which needs the generic C
-string routines selected in its build system.  See improvements/11.
+What is left in the second partition is only `ecall`, and that one is genuinely
+unavoidable for a program that talks to a host -- a bare-metal sc1 processor has
+nothing to make a syscall to, which is why rvsc0's own harness runs without libc
+at all.  newlib's assembly memset/memcpy/memmove/strcmp used to be here too, and
+were the same kind of defect as the libgcc one; they are gone now that the rvsc
+targets have their own newlib machine directory (libc/machine/rvsc), which keeps
+only setjmp.S -- itself rewritten to avoid seqz -- and lets the generic C string
+routines in libc/string be selected instead.
 """
 
 import argparse
@@ -72,10 +72,6 @@ RUNTIME_EXEMPT = {
     "_gettimeofday": "libgloss syscall stub (ecall)",
     "_unlink":  "libgloss syscall stub (ecall)",
     "_link":    "libgloss syscall stub (ecall)",
-    "memset":   "newlib libc/machine/riscv/memset.S",
-    "memcpy":   "newlib libc/machine/riscv/memcpy-asm.S",
-    "memmove":  "newlib libc/machine/riscv/memmove.S",
-    "strcmp":   "newlib libc/machine/riscv/strcmp.S",
 }
 
 _FUNC_RE = re.compile(r"^[0-9a-f]+ <([^>]+)>:")

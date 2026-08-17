@@ -17,7 +17,7 @@ Two independent correctness requirements apply to every target.
 target's allowed set. This requirement is verifiable by inspecting the assembly output.
 
 \textbf{Behavioral equivalence}: the compiled program must exhibit the same observable behavior as
-the source --- the same return values, the same memory effects, and the same control flow --- as if
+the source, the same return values, the same memory effects, and the same control flow, as if
 compiled for a processor that natively supports the full instruction set.
 
 \section{rvsc0 --- Basic Single-Cycle}
@@ -53,7 +53,7 @@ and the arithmetic-logical instructions add, sub, and, and or.
 
 \subsection{Limitations}
 
-The rvsc0 processor has no mechanism to write the program counter --- it supports neither \texttt{jalr}
+The rvsc0 processor has no mechanism to write the program counter, it supports neither \texttt{jalr}
 nor any jump-and-link instruction. As a consequence, subroutine calls are architecturally impossible,
 and the set of C programs that can be compiled for rvsc0 is restricted accordingly. For all other C
 constructs, the compiler must produce correct behavior using only the native instruction set.
@@ -140,8 +140,8 @@ Environment call & \texttt{ecall, ebreak}
 
 The three treatments are not equally strong, and the distinction matters to what the target can be
 said to guarantee. Memory ordering is a compiler obligation: the backend is configured never to emit a
-fence, and portable C that would ordinarily produce one --- \texttt{\_\_sync\_synchronize}, a
-sequentially consistent or acquire/release atomic --- produces none. Zicsr is enforced by the toolchain
+fence, and portable C that would ordinarily produce one, \texttt{\_\_sync\_synchronize}, a
+sequentially consistent or acquire/release atomic, produces none. Zicsr is enforced by the toolchain
 as a whole rather than by the compiler alone: because the target's architecture string is
 \texttt{rv32i}, which does not include Zicsr, the assembler refuses a \texttt{csr} mnemonic even when a
 program writes one by hand in inline assembly. \texttt{ecall} and \texttt{ebreak} receive neither

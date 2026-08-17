@@ -142,7 +142,7 @@ undefined results.
 \input{fig-datapath}
 
 The two absences that matter most for a compiler are visible in the figure as multiplexer inputs that
-were never built. Without an upper-immediate input to the write-back multiplexer there is no single
+are simply not there. Without an upper-immediate input to the write-back multiplexer there is no single
 instruction that places a large constant in a register, and without a PC-to-register path there is no
 instruction that records a return address, which is what makes function calls impossible on rvsc0
 (Section~\ref{sec:sc0-no-calls}). Every other restriction the subset imposes is an absent decode case

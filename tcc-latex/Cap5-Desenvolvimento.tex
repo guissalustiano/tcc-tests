@@ -261,7 +261,7 @@ $a_i$ & $b_i$ & $(a \mid b)_i$ & $(a \mathbin{\&} b)_i$ & $(a \mid b)_i - (a \ma
 \end{table}
 
 The last column matches $a \oplus b$ in every row, so the identity holds per bit. Moreover
-$(a \mathbin{\&} b)_i = 1$ implies $(a \mid b)_i = 1$ in every row --- the 1-bits of $a \mathbin{\&}
+$(a \mathbin{\&} b)_i = 1$ implies $(a \mid b)_i = 1$ in every row, the 1-bits of $a \mathbin{\&}
 b$ are always a subset of the 1-bits of $a \mid b$. Consequently the per-bit subtraction never needs
 to borrow from a neighboring bit position; interpreting $a \mid b$ and $a \mathbin{\&} b$ as 32-bit
 binary numbers, the ordinary two's-complement subtraction \texttt{sub rd, ab\_ior, ab\_and} computes
@@ -328,7 +328,7 @@ identity move for $b = 0$ is elided). The resulting assembly is listed in
 Appendix~\ref{apx:sll-const-asm}.
 
 \textbf{Variable shift count.} When $b$ is only known at runtime (e.g.\ \texttt{x << n}), the
-recursion cannot be unrolled against a known $b$ --- but it can be unrolled against the \textit{bits}
+recursion cannot be unrolled against a known $b$, but it can be unrolled against the \textit{bits}
 of $b$. Writing the masked count in binary, $b = \sum_{k=0}^{4} b_k 2^k$, gives
 
 \begin{equation*}
@@ -343,7 +343,7 @@ so the synthesis emits, for each of the five bit positions $k$, a test of that b
 mask $2^k$, \texttt{and} it with the count, \texttt{beq} past the block if zero) followed by a
 straight-line chain of $2^k$ doublings. Worst case is all five bits set: $16 + 8 + 4 + 2 + 1 = 31$
 doublings plus five three-instruction tests, measured at 47 retired instructions, using one extra
-register. There is no counter, no loop, and no back-edge --- every branch is a short forward
+register. There is no counter, no loop, and no back-edge, every branch is a short forward
 \texttt{beq}, which is native on both restricted targets, so rvsc0 gains the same way. The count is
 never explicitly masked to $[0, 31]$: only bits 0 through 4 are ever tested, which \textit{is} the
 C11 \S6.5.7 truncation. The resulting assembly is listed in Appendix~\ref{apx:sll-asm}.
@@ -355,8 +355,8 @@ instructions and a worst case of 187 at $b = 31$. Against that, decomposition is
 everywhere except at very small counts, where the five unconditional bit tests are pure overhead that
 the count-down loop avoided by exiting immediately: measured per operand, $b = 1$ costs 17
 instructions against the loop's 7, $b = 8$ costs 24 against 49, and $b = 31$ costs 47 against 187.
-The crossover is near $b = 3$. Static size moves the other way --- a variable shift is now a
-straight-line block of roughly 47 instructions instead of a short loop --- which is the mirror image
+The crossover is near $b = 3$. Static size moves the other way, a  variable shift is now a
+straight-line block of roughly 47 instructions instead of a short loop, which is the mirror image
 of the trade already made for constant-count shifts above.
 
 \paragraph{Logical Right Shift (SRL)} \label{sec:sc1-srl}
@@ -394,7 +394,7 @@ uint32_t srl(uint32_t x, uint32_t shift) {
 \texttt{in\_mask} pre-shift and the $(32-s)$-iteration extraction body directly at split time: every
 \texttt{<<=} above becomes a straight-line chain of \texttt{add} doublings, and every loop back-edge
 disappears entirely. Only the data-dependent bit test (\texttt{x \& in\_mask}, then conditionally
-\texttt{or}) survives as a forward, non-looping branch --- the loop \textit{control} is eliminated,
+\texttt{or}) survives as a forward, non-looping branch, the loop \textit{control} is eliminated,
 not the per-bit test itself, since whether a given input bit is set cannot be known until runtime.
 Measured worst case (masked shift amount $s = 1$, giving 31 surviving extraction steps, over an
 all-ones operand) is 158 instructions, using 3 extra registers (\texttt{out\_mask},
@@ -402,7 +402,7 @@ all-ones operand) is 158 instructions, using 3 extra registers (\texttt{out\_mas
 Appendix~\ref{apx:srl-const-asm}.
 
 \textbf{Variable shift count.} When $s$ is only known at runtime, the extraction body remains a
-genuine loop of $(32 - s)$ iterations --- the number of bits to move is a runtime quantity, and unlike
+genuine loop of $(32 - s)$ iterations, the number of bits to move is a runtime quantity, and unlike
 the left shift there is no way to decompose it into a fixed number of blocks. Two of its three costs
 have nonetheless been removed. The \texttt{in\_mask} pre-shift, marked \texttt{[sll]} above, is a left
 shift by the runtime count and so uses the binary decomposition of Section~\ref{sec:sc1-sll} rather
@@ -619,7 +619,7 @@ encodes only 12-bit signed immediates (range $-2048$ to $2047$), $\mathit{hi20}$
 split into two 10-bit halves $\mathit{hi} = \mathit{hi20}[19{:}10]$ and $\mathit{lo} =
 \mathit{hi20}[9{:}0]$ (each in $[0, 1023]$, so each fits \texttt{addi}). Because these two fields
 occupy disjoint bit ranges, $\mathit{hi20} = (\mathit{hi} \ll 10) + \mathit{lo}$ with no carry
-between them, so the combination can use \texttt{add}/\texttt{addi} instead of \texttt{or} ---
+between them, so the combination can use \texttt{add}/\texttt{addi} instead of \texttt{or},
 matching the rest of this target's arithmetic-only style and needing only one register throughout:
 
 \begin{lstlisting}
@@ -637,14 +637,6 @@ registers and is safe to emit both before and after register allocation. Worst c
 split and the trailing \texttt{lo12} addition are needed) this is 25 instructions; when
 $\mathit{hi20}$ itself fits \texttt{addi}, it collapses to 13--14.
 
-An earlier version of this target instead stored the 32-bit value in a linker-placed constant pool
-and loaded it with a single \texttt{lw rd, pool\_entry(x0)}, reasoning that the pool would always
-link within the 12-bit signed offset of \texttt{x0} (address below 2048). That reasoning was a
-mistake: nothing guarantees a program executes starting at address 0, and it did not hold even for
-this project's own Spike-based behavioral tests, whose bare-metal binaries load at
-\texttt{0x80000000} --- \texttt{\%lo(pool\_entry)} there computes a wrapped, incorrect address, so
-the load would silently return garbage. The addi/shift synthesis above has no such dependency on
-load address and was adopted instead.
 
 \subsubsection{LB, LBU, LH, LHU} \label{sec:sc1-lb-synthesis}
 
@@ -656,7 +648,7 @@ and sign-extend or zero-extend.
 yielding the address of the word that contains the byte or halfword at \texttt{addr}. The unit's
 position within the word is \texttt{addr \& MASK} (MASK = 3 for bytes, 2 for halfwords), and its bit
 offset is \texttt{(addr \& MASK) * 8}. Right-shifting the word by this amount moves the target unit
-to bits $[N-1:0]$ where $N$ is 8 or 16. A subsequent shift pair of $32-N$ bits --- left then right
+to bits $[N-1:0]$ where $N$ is 8 or 16. A subsequent shift pair of $32-N$ bits, left then right
 --- isolates the unit and performs either sign extension (arithmetic right shift, for \texttt{lb}/
 \texttt{lh}) or zero extension (logical right shift, for \texttt{lbu}/\texttt{lhu}). This is correct
 for any address alignment because the memory model is little-endian and the bit offset exactly encodes
@@ -689,7 +681,7 @@ positions the synthesized \texttt{srl} has left to walk.
 \paragraph{Lanes known at compile time} \label{sec:sc1-subword-const}
 
 Most sub-word accesses in ordinary code are not through an opaque pointer. A global \texttt{char}, a
-\texttt{short} field of a struct, a byte of a local array at a constant index --- in each of these the
+\texttt{short} field of a struct, a byte of a local array at a constant index, in each of these the
 object's position within its containing word is fixed when the program is compiled, and paying 460
 instructions to rediscover it at run time is pure waste. Before emitting the sequence above, the
 expansion therefore asks whether the lane is a compile-time constant, and if it is, emits the word
@@ -700,7 +692,7 @@ What makes the lane knowable is alignment, and the two facts available about it 
 \texttt{MEM\_ALIGN} is a lower bound, so it settles the question in one direction only: at least word
 alignment means lane 0, but an alignment of 16 bits means lane 0 \textit{or} lane 2 and settles
 nothing. For a non-zero lane the residue comes instead from the front end's own record of the address
---- a modulus $M$ and remainder $N$ with the address congruent to $N$ modulo $M$ --- which pins the
+--- a modulus $M$ and remainder $N$ with the address congruent to $N$ modulo $M$, which pins the
 lane exactly when $M$ is at least a word. Any offset the compiler cannot resolve this way falls back
 to the run-time path rather than to a guess, since the failure mode of guessing is an unaligned
 \texttt{lw} or the wrong word entirely.
@@ -709,7 +701,7 @@ Two consequences are worth stating because they shaped the result. First, the ex
 lane rather than written once: a right shift costs roughly in proportion to the number of bits that
 survive it, while a left shift costs one \texttt{add} per position, so lane 0 masks the byte off
 directly while lanes 1 to 3 shift the byte up to the top of the word and take a single logical
-\texttt{>>24} --- the cheapest right shift available, since only eight bits survive it. Second, the
+\texttt{>>24}, the cheapest right shift available, since only eight bits survive it. Second, the
 sequence has to be built by emitting the two shifts directly rather than by writing the equivalent
 C-level expression: \texttt{(w << 16) >> 24} is canonicalized straight back into
 \texttt{(w >> 8) \& 0xFF} by the middle end, undoing the choice, whereas an expansion that emits each
@@ -763,7 +755,7 @@ The \texttt{sh} synthesis follows the same read-modify-write pattern with \textt
 constant \texttt{0xFFFF}. That constant exceeds the 12-bit \texttt{addi} range, so it must itself be
 materialized, and how depends on the target. rvsc1 has \texttt{lui} and builds it as
 \texttt{lui 0x10; addi -1}. rvsc0 does not, and routes the constant through the \texttt{addi}/shift
-construction of Section~\ref{sec:sc0-lui} instead --- the same path every non-small constant takes on
+construction of Section~\ref{sec:sc0-lui} instead, the same path every non-small constant takes on
 that target. The sequence needs the constant twice, once for the mask that clears the halfword field
 of the loaded word and once for the mask that truncates the value being stored, so whichever
 construction applies is paid twice per \texttt{sh}. The same applies to the \texttt{0xFFFF} used by
@@ -799,8 +791,8 @@ Each call site expands to 5 instructions and requires one extra register (\textt
 \subsubsection{Loop Back Edges} \label{sec:sc1-backedge}
 
 The same absence of \texttt{jal} and \texttt{auipc} makes an \textit{unconditional} jump cost three
-instructions on rvsc1 --- \texttt{lui}, \texttt{addi}, \texttt{jr} against a materialized absolute
-address --- where rvsc0, which lacks \texttt{lui} too, pays only one. rvsc0's compiler cannot
+instructions on rvsc1, \texttt{lui}, \texttt{addi}, \texttt{jr} against a materialized absolute
+address, where rvsc0, which lacks \texttt{lui} too, pays only one. rvsc0's compiler cannot
 materialize the address at all, so it is forced into the cheaper construction: a conditional branch
 whose condition is trivially true.
 
@@ -817,7 +809,7 @@ For the back edge of a loop that this backend \textit{itself} emits, though, the
 by construction: the loop body is a fixed handful of instructions written by the expander, never more
 than a few dozen bytes. Those back edges therefore use the always-taken \texttt{beq}, one instruction
 instead of three. Two loops remain in the synthesis after the left shift became straight-line
-(Section~\ref{sec:sc1-sll}) --- the bit-extraction loops of \texttt{srl} and \texttt{sra} --- and both
+(Section~\ref{sec:sc1-sll}), the bit-extraction loops of \texttt{srl} and \texttt{sra}, and both
 save two instructions on every iteration, which is where the bulk of the improvement in
 Table~\ref{tab:synthesis-cost}'s variable-count right-shift rows comes from. The out-of-range case is
 handled rather than assumed away: the construction is an ordinary conditional-branch instruction as
@@ -844,7 +836,7 @@ position, misaligned halfword address).
 \texttt{xor} (imm)   & rvsc0, rvsc1 & 4    & 2 \\
 \texttt{ori} (imm)   & rvsc1        & 2    & 1 \\
 \texttt{andi} (imm)  & rvsc1        & 2    & 1 \\
-\texttt{sll} (const) & rvsc0, rvsc1 & $b$ (max 31) & 0 \\
+\texttt{sll} (const) & rvsc0, rvsc1 & 31   & 0 \\
 \texttt{sll} (var)   & rvsc0, rvsc1 & 47   & 1 \\
 \texttt{srl} (const) & rvsc0, rvsc1 & 158  & 3 \\
 \texttt{srl} (var)   & rvsc0, rvsc1 & 332  & 3 \\
@@ -856,10 +848,10 @@ position, misaligned halfword address).
 \texttt{blt}/\texttt{bltu} & rvsc0, rvsc1 & 16 & 7 \\
 \texttt{bge}/\texttt{bgeu} & rvsc0, rvsc1 & 17 & 7 \\
 \texttt{lui} (addi+shift) & rvsc0   & 25   & 0 \\
-\texttt{lb}/\texttt{lbu} & rvsc0, rvsc1 & 77 known lane; 460 unknown & 2 \\
-\texttt{lh}/\texttt{lhu} & rvsc0, rvsc1 & 85 known lane; 532 unknown & 2 \\
-\texttt{sb}          & rvsc0, rvsc1 & 32 known lane; 95 unknown & 3 \\
-\texttt{sh}          & rvsc0, rvsc1 & 23 known lane; 82 unknown & 3 \\
+\texttt{lb}/\texttt{lbu} & rvsc0, rvsc1 & 77 known lane, 460 unknown & 2 \\
+\texttt{lh}/\texttt{lhu} & rvsc0, rvsc1 & 85 known lane, 532 unknown & 2 \\
+\texttt{sb}          & rvsc0, rvsc1 & 32 known lane, 95 unknown & 3 \\
+\texttt{sh}          & rvsc0, rvsc1 & 23 known lane, 82 unknown & 3 \\
 \texttt{jump}        & rvsc0        & 1    & 0 \\
 \texttt{jump}        & rvsc1        & 3    & 1 \\
 \texttt{jal}         & rvsc1        & 5    & 1 \\
@@ -875,7 +867,7 @@ are easy to get wrong and were determined by scanning rather than assumed. The c
 on the data as well as the amount, because the extraction step for each bit position is a conditional
 merge: \texttt{srl} by 1 costs 158 instructions on an all-ones operand but 127 on zero. And sub-word
 loads are most expensive at an \textit{aligned} address, not a misaligned one, because the extraction
-shift gets cheaper as the offset grows --- an unknown-lane \texttt{lb} costs 460 instructions at
+shift gets cheaper as the offset grows, an unknown-lane \texttt{lb} costs 460 instructions at
 offset 0 and 244 at offset 3, the opposite of what ``worst-case misaligned access'' suggests.
 
 The four sub-word rows carry two figures each because they are two different sequences, not one
@@ -890,8 +882,8 @@ about the address, which is why the Embench measurements move so unevenly betwee
 (Section~\ref{sec:embench-size}).
 
 Because the counts are measured on the code actually generated, the rows are not additive: the ordered
-branches cost 16 and 17 instructions although each is defined as an \texttt{[slt]} --- 49 instructions
---- followed by a \texttt{beq} or \texttt{bne}. A branch consumes the comparison only as a zero test,
+branches cost 16 and 17 instructions although each is defined as an \texttt{[slt]} (49 instructions)
+followed by a \texttt{beq} or \texttt{bne}. A branch consumes the comparison only as a zero test,
 so the shift that would normalize it to 0 or 1 is folded into a sign-bit mask and its 31-step doubling
 chain never appears (Section~\ref{sec:sc1-ordered-branches}). Every row of
 Table~\ref{tab:synthesis-cost} is the cost of that operation in the context measured, not a term to be
@@ -901,7 +893,7 @@ Static and dynamic counts coincide only for the straight-line rows. The variable
 differ, though the gap has narrowed and partly reversed: \texttt{srl} (var) retires up to 332
 instructions and now occupies 65 in \texttt{.text}, against 477 retired and 35 static before, because
 trading a loop for a straight-line binary decomposition converts trip count into code size.
-\texttt{sll} (var) is the extreme case --- 47 retired and 47 static, the two now identical, where the
+\texttt{sll} (var) is the extreme case, 47 retired and 47 static, the two now identical, where the
 count-down loop was 187 retired against a twelve-instruction body. Table~\ref{tab:embench-size}, which
 measures \texttt{.text}, therefore weights these rows more heavily than it used to, and
 Table~\ref{tab:embench-perf} less; the reversal is deliberate and is the same trade already made for
@@ -911,8 +903,8 @@ The figures are measured on rvsc1. rvsc0 synthesizes the same operations, and th
 closer than they were: the loop back-edge, formerly a single \texttt{beq zero,zero} on rvsc0 against
 \texttt{lui}+\texttt{addi}+\texttt{jr} on rvsc1, is the cheap form on both
 (Section~\ref{sec:sc1-backedge}), and the left shifts that were loops on both are now straight-line on
-both. What remains is constant materialization --- every constant wider than 12 bits costs rvsc0 an
-\texttt{addi}/shift construction where rvsc1 emits \texttt{lui}+\texttt{addi} --- which now moves
+both. What remains is constant materialization, every constant wider than 12 bits costs rvsc0 an
+\texttt{addi}/shift construction where rvsc1 emits \texttt{lui}+\texttt{addi}, which now moves
 rvsc0's costs in one direction only, upward.
 
 \section{GCC Implementation} \label{sec:sc1-gcc-impl}
@@ -1059,7 +1051,7 @@ the RTL it replaces names only the byte or halfword. Alias analysis therefore re
 object while the emitted code touches the whole word: two stores to distinct adjacent symbols look
 independent, and the word loads may be hoisted above the word stores, which is sound for the bytes and
 wrong for the words containing them. The fix is to mark the synthesized word accesses as potentially
-aliasing anything, which costs the ability to reuse a word a neighbouring access has just loaded --- a
+aliasing anything, which costs the ability to reuse a word a neighbouring access has just loaded, a
 cost that is visible in the dynamic measurements of Section~\ref{sec:embench-perf}.
 
 \subsection{Worked Example: XOR in C to Assembly} \label{sec:sc1-example}
@@ -1069,7 +1061,7 @@ compiled by \texttt{rvsc1-unknown-elf-gcc -S -O1}:
 
 \begin{enumerate}
   \item \textbf{Frontend}: parses \texttt{a \^{} b} to an AST \texttt{XOR\_EXPR} node.
-  \item \textbf{GIMPLE}: \texttt{\_1 = a \^{} b; return \_1;} --- language-independent SSA form.
+  \item \textbf{GIMPLE}: \texttt{\_1 = a \^{} b; return \_1;}, language-independent SSA form.
   \item \textbf{RTL lowering}: GCC attempts to emit \texttt{xorsi3}. \texttt{TARGET\_XOR} is 0
         (rvsc1 disables XOR), so the \texttt{XOR} branch of the synthesis body fires
         (Section~\ref{sec:sc1-md}).
@@ -1091,7 +1083,7 @@ sub  a0, a0, a5
 \end{lstlisting}
 
 Inspecting the result with \texttt{grep xor} returns empty; only \texttt{and}, \texttt{or}, and
-\texttt{sub} appear --- all native sc1 instructions.
+\texttt{sub} appear, all native sc1 instructions.
 
 \section{Known Limitations}
 

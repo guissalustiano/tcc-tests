@@ -36,11 +36,15 @@ added:
 \end{tabular}
 \end{table}
 
-\subsection{GNU Binutils}
+\subsection{GNU Binutils} \label{sec:binutils}
 
-GNU Binutils supplies the assembler and linker. Its source is used without modification: every
-restriction imposed by this work is enforced in the compiler, so the assembler must accept the full
-base ISA and needs no changes at all. What does change is the configuration. GCC's \texttt{configure}
+GNU Binutils supplies the assembler and linker. Its \emph{instruction handling} is used without
+modification: every restriction imposed by this work is enforced in the compiler, so the assembler
+must accept the full base ISA and needs no change there. What the fork does add is target-triple
+registration, since no part of the build machinery recognises a triple it has never heard of:
+the \texttt{rvscN} CPU names in \texttt{config.sub}, the BFD target vectors in
+\texttt{bfd/config.bfd} (32-bit for rvsc0--rvsc3, 64-bit for rvsc4--rvsc7), and the corresponding
+entries in \texttt{gas/configure.tgt} and \texttt{ld/configure.tgt}. GCC's \texttt{configure}
 looks for an assembler and linker named after its own target triple, so a separate binutils is built
 and installed for each \texttt{rvscN-unknown-elf} triple before GCC itself, as described in
 Section~\ref{sec:building-binutils}. The upstream \texttt{riscv32-none-elf} build is additionally used
@@ -64,30 +68,46 @@ retired instructions for the performance measurements.
 
 \subsection{Repository Setup}
 
-The GCC backend modifications live in a fork of the upstream GCC repository:
+Three source repositories are needed, and all three are forks maintained for this work under
+\nolinkurl{github.com/guissalustiano}. Each keeps its \texttt{master} branch tracking upstream, so
+the work is reproducible from a known base.
+
+The GCC backend modifications live on the \texttt{hannersy-patterson} branch of the GCC fork; its
+\texttt{master} is upstream GCC unchanged, so the branch must be requested explicitly:
 
 \begin{lstlisting}[language=bash]
-git clone https://github.com/guissalustiano/gcc-hannersy-paterson gcc
+git clone -b hannersy-patterson \
+    https://github.com/guissalustiano/gcc-hannersy-paterson gcc
 \end{lstlisting}
 
-The GNU Binutils source is cloned separately and is required for all targets, since GCC must invoke
-the target assembler during compilation:
+The GNU Binutils fork is cloned separately and is required for all targets, since GCC must invoke
+the target assembler during compilation. It carries only the target-triple registration described
+in Section~\ref{sec:binutils}:
 
 \begin{lstlisting}[language=bash]
-git clone https://sourceware.org/git/binutils-gdb.git binutils-gdb
+git clone https://github.com/guissalustiano/binutils-gdb
 \end{lstlisting}
 
-Both repositories should sit side by side in the same parent directory. The build directories and
-installed toolchains are placed inside a per-target subdirectory:
+The newlib fork supplies the C library, the \texttt{crt0} startup code and the libgloss host
+syscall stubs used by the rvsc1 and rvsc2 targets:
+
+\begin{lstlisting}[language=bash]
+git clone https://github.com/guissalustiano/newlib-src
+\end{lstlisting}
+
+All three repositories should sit side by side in the same parent directory. The build directories
+and installed toolchains are placed inside a per-target subdirectory:
 
 \begin{lstlisting}
 project/
 +-- gcc/              <- GCC fork (source, never built in-tree)
-+-- binutils-gdb/     <- binutils source
++-- binutils-gdb/     <- binutils fork
++-- newlib-src/       <- newlib fork
 +-- targets/
     +-- rvsc2/
         +-- build-binutils/   <- binutils out-of-tree build
         +-- build/            <- GCC out-of-tree build
+        +-- build-newlib/     <- newlib out-of-tree build
         +-- install/          <- installed toolchain (bin/, lib/, ...)
 \end{lstlisting}
 

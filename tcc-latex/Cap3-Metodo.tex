@@ -67,7 +67,7 @@ Behavioral equivalence is verified by execution: each test is a self-validating 
 exercises one operation category and compares every computed result against a value established
 independently within the same program, either a constant worked out by hand or an algebraic identity
 assembled from other operations. The program is compiled by the custom target and executed on the
-Spike ISA simulator \cite{spike}; it returns 0 when every assertion holds and a distinct nonzero code
+Spike ISA simulator \cite{spike}, it returns 0 when every assertion holds and a distinct nonzero code
 identifying the first failure otherwise, so the test passes when the simulator exits with code 0.
 
 A third validation layer exercises the compiler against a much larger corpus than hand-written tests

@@ -376,34 +376,34 @@
    \vspace*{\fill}
    \centering
    \noindent
-   \textit{Para que servem tantos códigos, se a vida não é programada\\
-   e as melhores coisas não têm lógica.} \vspace*{\fill}
+   \textit{Se o ar não se movimenta, não tem vento\\
+   se a gente não se movimenta, não tem vida.} \vspace*{\fill}
 \end{dedicatoria}
 % ---
 
 % ---
 % Agradecimentos
 % ---
-\begin{agradecimentos}
-% Personal thanks are deliberately generic below; add names as you see fit.
-I thank my advisor, Prof. Bruno de Carvalho Albertini, for proposing a problem that sits exactly
-on the boundary between the hardware a student builds and the software a student writes, and for
-the guidance and the freedom that let it grow into this work.
+% \begin{agradecimentos}
+% % Personal thanks are deliberately generic below; add names as you see fit.
+% I thank my advisor, Prof. Bruno de Carvalho Albertini, for proposing a problem that sits exactly
+% on the boundary between the hardware a student builds and the software a student writes, and for
+% the guidance and the freedom that let it grow into this work.
 
-I thank the Department of Computer and Digital Systems Engineering (PCS) of the Escola Politécnica
-at the University of São Paulo, and in particular the teaching staff and the students of PCS3225
---- Digital Systems 2. That course is both the reason these compiler targets exist and the setting
-they were built for.
+% I thank the Department of Computer and Digital Systems Engineering (PCS) of the Escola Politécnica
+% at the University of São Paulo, and in particular the teaching staff and the students of PCS3225
+% --- Digital Systems 2. That course is both the reason these compiler targets exist and the setting
+% they were built for.
 
-This work rests on a great deal of freely available engineering. The GCC developers, whose machine
-description framework turns instruction synthesis into a matter of declaring patterns rather than of
-writing a compiler from scratch; the maintainers of the upstream RISC-V backend, on which all eight
-targets are built; and the authors of Spike, GNU Binutils, newlib and Embench-IoT, without which
-none of the validation reported in Chapter~\ref{cap:results} would have been possible.
+% This work rests on a great deal of freely available engineering. The GCC developers, whose machine
+% description framework turns instruction synthesis into a matter of declaring patterns rather than of
+% writing a compiler from scratch; the maintainers of the upstream RISC-V backend, on which all eight
+% targets are built; and the authors of Spike, GNU Binutils, newlib and Embench-IoT, without which
+% none of the validation reported in Chapter~\ref{cap:results} would have been possible.
 
-Finally, I thank my family and my friends, for their support and their patience through the
-stretches when this work had all of my attention.
-\end{agradecimentos}
+% Finally, I thank my family and my friends, for their support and their patience through the
+% stretches when this work had all of my attention.
+% \end{agradecimentos}
 % ---
 
 % ---
@@ -420,49 +420,23 @@ stretches when this work had all of my attention.
 % ---
 % RESUMOS
 % ---
+% O trabalho é escrito em inglês, então o abstract em inglês vem primeiro e o
+% resumo em português o segue, como resumo em língua estrangeira.
+%
+% Os dois títulos são dados explicitamente.  \selectlanguage{english} está em
+% vigor, então um ambiente `resumo` sem o argumento opcional tira o título do
+% babel e imprime "Abstract" — inclusive sobre o texto em português, que é o que
+% acontecia antes desta troca.  Cada resumo também declara a sua própria língua,
+% para que a hifenização seja a do texto e não a do documento.
 
-% resumo em português
+% abstract em inglês (idioma do trabalho)
 \setlength{\absparsep}{18pt} % ajusta o espaçamento dos parágrafos do resumo
-\begin{resumo}
-Este trabalho apresenta oito alvos de compilação cruzada GCC para os processadores educacionais de
-ciclo único RISC-V descritos no livro-texto de arquitetura de computadores de Hennessy e Patterson.
-Cada alvo, denominado rvsc0 a rvsc7, modela um subconjunto progressivamente mais rico do conjunto
-de instruções RISC-V --- do núcleo de oito instruções utilizado em cursos introdutórios ao perfil
-completo rv64imafd --- e produz binários ELF \textit{bare-metal} executáveis no simulador de ISA Spike.
-
-Os dois alvos mais restritos, rvsc0 e rvsc1, exigem que o compilador sintetize cada instrução
-ausente utilizando apenas as operações suportadas nativamente pelo hardware. As operações sintetizadas
-incluem XOR bit a bit, todos os tipos de deslocamento (SLL, SRL, SRA), comparação com e sem sinal
-(SLT, SLTU), desvios condicionais (BNE, BLT, BGE, BLTU, BGEU), acessos à memória em sub-palavra
-(LB, LBU, LH, LHU, SB, SH) e chamadas de função (JAL). Cada síntese é derivada de um argumento
-formal de corretude e implementada como um padrão de expansão na descrição de máquina do GCC.
-
-A corretude é validada em duas camadas independentes: a conformidade com a ISA é verificada por
-desmontagem de cada objeto compilado --- e, no rvsc1, também de cada executável ligado --- e
-checagem de cada mnemônico contra uma lista de permissão por alvo; a equivalência comportamental é
-verificada executando no Spike programas de teste autovalidantes, que conferem cada resultado contra
-valores calculados independentemente no próprio programa e sinalizam a primeira asserção violada por
-um código de saída distinto. Adicionalmente, o rvsc1 é validado contra a suíte de testes de tortura
-do GCC, cujos 1\,684 programas são compilados e executados em cinco níveis de otimização: todas as
-8\,345 combinações que este alvo \textit{freestanding} consegue compilar e ligar terminam
-corretamente.
-
-O resultado é uma \textit{toolchain} funcional que permite a estudantes compilar programas C
-arbitrários e executá-los no processador que projetaram, fechando o ciclo pedagógico entre a
-implementação de hardware e a abstração de software.
-
- \textbf{Palavras-chave}: GCC. RISC-V. Compilador. Processador educacional.
-\end{resumo}
-
-% resumo em inglês
 \begin{resumo}[Abstract]
  \begin{otherlanguage*}{english}
 This work presents eight GCC cross-compiler targets for the educational single-cycle RISC-V
 processors described in the Hennessy-Patterson computer architecture textbook. Each target,
 designated rvsc0 through rvsc7, models a progressively richer subset of the RISC-V instruction
-set --- from the eight-instruction single-cycle core used in introductory courses to the full
-rv64imafd profile --- and produces bare-metal ELF binaries executable on the Spike RISC-V ISA
-simulator.
+set.
 
 The two most restricted targets, rvsc0 and rvsc1, require the compiler to synthesize every missing
 instruction using only the operations the hardware natively supports. Synthesized operations include
@@ -472,9 +446,10 @@ SB, SH), and function calls (JAL). Each synthesis is derived from a formal corre
 implemented as a GCC machine-description expand pattern.
 
 Correctness is validated on two independent layers: ISA compliance is verified by disassembling
-every compiled object --- and, for rvsc1, every linked executable --- and checking every mnemonic
-against a per-target allowlist; behavioral equivalence is verified by executing self-validating test
-programs on Spike, each of which checks its computed results against values derived independently
+every compiled file and checking every mnemonic
+against the list of instructions the given target
+permits. Behavioral equivalence is verified by executing self-validating test programs on an
+emulator, each of which checks its computed results against values derived independently
 within the same program and signals the first violated assertion through a distinct exit code.
 Additionally, rvsc1 is validated against the GCC compiler torture test suite, whose 1\,684 programs
 are compiled and executed at five optimization levels: all 8\,345 combinations this freestanding
@@ -488,6 +463,44 @@ and software abstraction.
 
    \noindent
    \textbf{Keywords}: GCC. RISC-V. Compiler. Educational processor.
+ \end{otherlanguage*}
+\end{resumo}
+
+% resumo em português (língua estrangeira em relação ao idioma do trabalho)
+\begin{resumo}[Resumo]
+ \begin{otherlanguage*}{brazil}
+Este trabalho apresenta oito alvos de compilação cruzada GCC para os processadores educacionais de
+ciclo único RISC-V descritos no livro-texto de arquitetura de computadores de Hennessy e Patterson.
+Cada alvo, denominado rvsc0 a rvsc7, modela um subconjunto progressivamente mais rico do conjunto
+de instruções RISC-V.
+
+Os dois alvos mais restritos, rvsc0 e rvsc1, exigem que o compilador sintetize cada instrução
+ausente utilizando apenas as operações suportadas nativamente pelo hardware. As operações sintetizadas
+incluem XOR bit a bit, todos os tipos de deslocamento (SLL, SRL, SRA), comparação com e sem sinal
+(SLT, SLTU), desvios condicionais (BNE, BLT, BGE, BLTU, BGEU), acessos à memória em sub-palavra
+(LB, LBU, LH, LHU, SB, SH) e chamadas de função (JAL). Cada síntese é derivada de um argumento
+formal de corretude e implementada como um padrão de expansão na descrição de máquina do GCC.
+
+A corretude é validada em duas camadas independentes: a conformidade com a ISA é verificada pelo
+disassemble de cada arquivo compilado e
+checagem de cada mnemônico contra a lista de instruções permitidas no determinado target.
+A equivalência comportamental é
+verificada executando programas de teste autovalidantes em um emulador, que conferem cada resultado contra
+valores calculados independentemente no próprio programa e sinalizam a primeira asserção violada por
+um código de saída distinto. Adicionalmente, o rvsc1 é validado contra a suíte de testes de tortura
+do GCC, cujos 1\,684 programas são compilados e executados em cinco níveis de otimização: todas as
+8\,345 combinações que este alvo \textit{freestanding} consegue compilar e ligar terminam
+corretamente.
+
+O resultado é uma \textit{toolchain} funcional que permite a estudantes compilar programas C
+arbitrários e executá-los no processador que projetaram, fechando o ciclo pedagógico entre a
+implementação de hardware e a abstração de software.
+
+
+   \vspace{\onelineskip}
+
+   \noindent
+   \textbf{Palavras-chave}: GCC. RISC-V. Compilador. Processador educacional.
  \end{otherlanguage*}
 \end{resumo}
 
@@ -521,9 +534,9 @@ and software abstraction.
 % ---
 % inserir lista de quadros
 % ---
-\pdfbookmark[0]{\listofquadrosname}{loq}
-\listofquadros*
-\cleardoublepage
+% \pdfbookmark[0]{\listofquadrosname}{loq}
+% \listofquadros*
+% \cleardoublepage
 % ---
 
 % ---

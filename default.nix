@@ -85,6 +85,7 @@ pkgs.mkShell {
     typst
     liberation_ttf
     tex          # tcc-latex/: pdflatex, bibtex, makeindex, latexmk
+    texlab       # LaTeX language server; resolves packages via the tex above
   ];
 
   shellHook = ''

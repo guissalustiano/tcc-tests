@@ -3,10 +3,9 @@
 % ---------------------------------------------------------------
 \chapter{Related Work} \label{cap:related-work}
 
-Three bodies of work bear on this project: GCC's established mechanisms for synthesizing
-hardware-absent operations, applied in the embedded domain for decades; the search for optimal
-instruction sequences and the compilers written for deliberately minimal instruction sets; and
-pedagogical tools for instruction-set-level computing education.
+Two bodies of work bear on this project: GCC's established mechanisms for synthesizing
+hardware-absent operations, applied in the embedded domain for decades; and pedagogical tools for
+instruction-set-level computing education.
 
 \section{Instruction Synthesis in Compiler Backends}
 
@@ -46,45 +45,6 @@ everything, and must synthesize shifts, exclusive or, ordered comparisons, all c
 other than \texttt{beq}, every sub-word load and store, and --- on sc0 --- the loading of a large
 constant, out of eight or ten remaining instructions.
 
-\section{Optimal and Minimal Instruction Sequences}
-
-A second line of work asks not how to replace a missing instruction, but how to find the shortest
-sequence of available instructions that computes a given function. \citeonline{massalin1987} built the
-first superoptimizer, searching exhaustively over short sequences and testing each candidate against
-the specification of the operation; it found sequences shorter than those any compiler of the time
-produced, including branch-free implementations of operations normally written with conditionals.
-\citeonline{granlund1992} brought the technique into GCC itself: they used a superoptimizer to discover
-branch-free sequences for comparisons and conditional operations on several architectures, then wrote
-the results into the machine descriptions. That is precisely the form the results of this work take ---
-a sequence established once and then installed in a \texttt{define\_expand}. \citeonline{bansal2006}
-later automated the harvesting step, generating peephole optimizers by enumerating and verifying
-candidate sequences offline.
-
-Each synthesis derived in Section~\ref{sec:sc1-synthesis} is therefore a hand-written answer to the
-question a superoptimizer answers by search, over a target whose instruction set is small enough that
-the search space for a single operation would be correspondingly small. The derivations here are
-algebraic arguments, and are proved rather than sampled, which is what allows a claim about all inputs;
-a search-based derivation over the same subset, verified the same way, would be a natural extension.
-
-At the far end of the same axis are instruction sets designed to be as small as an instruction set can
-be. The one-instruction set computer, whose classic presentation is the URISC of \citeonline{urisc},
-executes a single instruction --- subtract and branch if the result is less than or equal to zero ---
-from which every other operation is constructed; URISC was proposed, like the processor this work
-targets, as a teaching vehicle. \citeonline{subleq} carry the construction into a working system,
-implementing an array of subleq processors on an FPGA together with a compiler from a C-like language,
-and so show that a high-level language can be compiled to one instruction. \citeonline{dolan2013} makes
-the corresponding point about an existing architecture, proving that the x86 \texttt{mov} instruction
-is Turing-complete on its own, and the movfuscator of \citeonline{movfuscator} is the compiler that
-follows from that proof, translating C into x86 programs that contain essentially no other instruction.
-
-This work shares its question with those --- how little instruction set a compiled high-level language
-actually needs --- but answers it under different constraints. Those projects are free to choose the
-instruction set that makes the argument, and to accept whatever performance the demonstration costs.
-Here the instruction set is fixed in advance by a textbook chapter and by what students build in a
-laboratory, the generated code must observe the standard RISC-V ABI so that it links against ordinary
-libraries and runs under an unmodified simulator, and the cost of each substitution is a quantity the
-work is obliged to measure (Chapter~\ref{cap:results}) rather than to disregard.
-
 \section{Pedagogical Instruction-Set Tools}
 
 A distinct body of work provides tools for computer architecture education at the assembly level. Venus
@@ -96,9 +56,9 @@ BRISC-V \cite{brisc-v} provides an open-source parameterised RISC-V processor fa
 architecture education together with a standard GCC toolchain. The toolchain targets the full RV32I
 instruction set, with no mechanism to restrict the compiler to a hardware-defined subset.
 
-This work sits at the intersection of the three lines: it brings the instruction synthesis approach
-from the embedded compiler domain, applied to a subset small enough to raise the minimal-instruction-set
-question, into the pedagogical setting of the Hennessy-Patterson processor \cite{patterson2020},
+This work sits at the intersection of the two lines: it brings the instruction synthesis approach
+from the embedded compiler domain, applied to a far smaller instruction subset,
+into the pedagogical setting of the Hennessy-Patterson processor \cite{patterson2020},
 enabling students to write C programs that run correctly on a processor with a deliberately minimal
 instruction set --- one they built themselves, which is what the assembly-level simulators and the
 full-ISA toolchains each leave out.
@@ -142,9 +102,9 @@ add single- and double-precision IEEE~754 floating-point.
 
 A single-cycle processor completes every instruction in exactly one clock cycle. The datapath consists
 of five principal components wired in sequence: an instruction memory that outputs the instruction at
-the current program counter (PC); a register file with two read ports and one write port; an arithmetic
-logic unit (ALU) that performs the operation selected by the control unit; a data memory for load and
-store operations; and a set of multiplexers that route operands and results under control of the
+the current program counter (PC), a register file with two read ports and one write port; an arithmetic
+logic unit (ALU) that performs the operation selected by the control unit, a data memory for load and
+store operations, and a set of multiplexers that route operands and results under control of the
 control signals derived from the instruction opcode \cite{patterson2020}.
 Figure~\ref{fig:datapath} shows these components and their interconnection for the eight-instruction
 subset this work targets.
@@ -172,7 +132,7 @@ eight instructions, the complete datapath and control unit fit on a single diagr
 understood and implemented within a single lab exercise.
 
 The datapath for this subset is purpose-built. There is an ALU path for R-type arithmetic
-(\texttt{add}, \texttt{sub}, \texttt{and}, \texttt{or}) and I-type arithmetic (\texttt{addi}); a
+(\texttt{add}, \texttt{sub}, \texttt{and}, \texttt{or}) and I-type arithmetic (\texttt{addi}), a
 memory path for \texttt{lw} and \texttt{sw}; and a branch comparator for \texttt{beq}. The processor
 has no hardware for PC-relative address computation (no AUIPC path), no mechanism to load a 20-bit
 upper immediate into a register (no LUI path), and no register-to-PC write path that also captures

@@ -58,16 +58,22 @@ Validation addresses two correctness requirements defined in Chapter~\ref{cap:re
 compliance and behavioral equivalence.
 
 ISA compliance is verified structurally by disassembling the compiled output and checking every
-mnemonic against a per-target allowlist.
+mnemonic against a per-target allowlist. The check is applied at two scopes, because they support two
+different claims: to every object the compiler produces, which is what bounds the compiler's own
+behaviour, and to the fully linked executable, which additionally covers the runtime libraries the
+program is linked against and which the compiler never sees.
 
-Behavioral equivalence is verified by differential execution: the same C program is compiled by both
-the custom target and a reference RV32I compiler, and both binaries are executed on the Spike ISA
-simulator \cite{spike}; the test passes when both produce identical exit codes.
+Behavioral equivalence is verified by execution: each test is a self-validating C program that
+exercises one operation category and compares every computed result against a value established
+independently within the same program, either a constant worked out by hand or an algebraic identity
+assembled from other operations. The program is compiled by the custom target and executed on the
+Spike ISA simulator \cite{spike}; it returns 0 when every assertion holds and a distinct nonzero code
+identifying the first failure otherwise, so the test passes when the simulator exits with code 0.
 
-A third validation layer exercises the compiler against a much larger, automatically generated corpus.
-The GCC test suite includes a \textit{torture test} mode that systematically varies optimization flags
-and source patterns across hundreds of programs; besides compiling \texttt{libgcc} against the custom
-target also stresses constant materialization, multi-word arithmetic, and calling-convention edge cases
+A third validation layer exercises the compiler against a much larger corpus than hand-written tests
+can provide. The GCC test suite includes a \textit{torture test} mode that compiles and runs hundreds
+of programs at every optimization level; together with building \texttt{libgcc} itself for the custom
+target, it stresses constant materialization, multi-word arithmetic, and calling-convention edge cases
 that hand-written behavioral tests would not cover.
 
 Test results are presented in Chapter~\ref{cap:results}.

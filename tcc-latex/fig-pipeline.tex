@@ -1,0 +1,111 @@
+% GCC compilation pipeline, marking the point where this work's synthesis
+% happens (the RTL expansion pass, where `define_expand` bodies run).
+%
+% TikZ port of figures/pipeline.typ.  Conventions:
+%   - solid boxes / arrows : the representations and the passes between them
+%   - dashed grey boxes    : machine-description constructs acting at that step
+\begin{figure}[htb]
+\centering
+\begin{SingleSpace}
+\begin{tikzpicture}[
+  x=0.74cm, y=0.74cm,
+  font=\sffamily\fontsize{7}{8}\selectfont,
+  stage/.style={draw, fill=black!4, inner sep=0pt, align=center,
+                line width=0.5pt},
+  flow/.style={-{Straight Barb[scale=0.55]}, line width=0.5pt},
+  note/.style={draw=black!45, dashed, line width=0.4pt},
+  notetext/.style={anchor=north west, text=black!55, align=left,
+                   font=\sffamily\fontsize{5.5}{6.6}\selectfont},
+  passlbl/.style={anchor=east, align=right,
+                  font=\sffamily\fontsize{5.5}{6.6}\selectfont},
+  bracket/.style={draw=black!50, line width=0.5pt},
+]
+
+\def\bxa{2.2}
+\def\bxb{6.4}
+\def\ax{4.3}
+
+\newcommand{\Stage}[2]{%
+  \path[stage] (\bxa,{#1-0.45}) rectangle (\bxb,{#1+0.45});
+  \node at ({(\bxa+\bxb)/2},#1) {#2};}
+% Vertical arrow between two stages, with the pass name to its left.
+\newcommand{\Step}[3]{%
+  \draw[flow] (\ax,{#1-0.45}) -- (\ax,{#2+0.45});
+  \node[passlbl] at ({\ax-0.25},{(#1+#2)/2}) {#3};}
+% Dashed note box on the right, with a pointer into the flow.
+\newcommand{\Note}[4]{%
+  \path[note] (10.2,#1) rectangle (18.1,#2);
+  \node[notetext] at (10.4,{#1-0.2}) {#4};
+  \draw[note, -{Straight Barb[scale=0.5]}] (10.2,#3) -- ({\ax+0.15},#3);}
+% Phase bracket down the left-hand side.
+\newcommand{\Phase}[3]{%
+  \draw[bracket] (-0.5,#1) -- (-0.5,#2);
+  \draw[bracket] (-0.5,#1) -- (-0.3,#1);
+  \draw[bracket] (-0.5,#2) -- (-0.3,#2);
+  \node[rotate=-90, text=black!60,
+        font=\sffamily\fontsize{5.5}{6.6}\selectfont]
+    at (-0.85,{(#1+#2)/2}) {#3};}
+
+% --- the representations -------------------------------------------------
+\Stage{0}{C source}
+\Stage{-1.9}{GENERIC (AST)}
+\Stage{-3.9}{GIMPLE, SSA form}
+\Stage{-6.3}{RTL, pseudo-registers}
+\Stage{-8.4}{RTL, hard registers}
+\Stage{-10.2}{assembly (\texttt{.s})}
+\Stage{-12.0}{ELF object}
+
+% --- the passes between them ---------------------------------------------
+\Step{0}{-1.9}{parse}
+\Step{-1.9}{-3.9}{gimplify,\\SSA construction}
+\Step{-3.9}{-6.3}{\textbf{RTL expansion}}
+\Step{-6.3}{-8.4}{combine, register\\allocation (IRA/LRA),\\post-reload splits}
+\Step{-8.4}{-10.2}{final: output\\templates}
+\Step{-10.2}{-12.0}{\texttt{as} (binutils)}
+
+\node[anchor=west, text=black!60, align=left,
+      font=\sffamily\fontsize{5.5}{6.6}\selectfont\itshape]
+  at ({\bxb+0.3},-3.9) {target-independent\\optimisation passes};
+
+% --- phase brackets -------------------------------------------------------
+\Phase{0.5}{-4.4}{front end + middle end}
+\Phase{-4.9}{-10.7}{back end (target dependent)}
+
+% --- what the machine description contributes, and where ------------------
+\path[note] (10.2,0.5) rectangle (18.1,-1.15);
+\node[notetext] at (10.4,0.3) {%
+  \texttt{rvscN.h} \texttt{CC1\_SPEC} injects \texttt{-mno-shift},
+  \texttt{-mno-xor}, \dots\\
+  which clear the \texttt{riscv.opt} flags \texttt{TARGET\_SHIFT},\\
+  \texttt{TARGET\_XOR}, \dots\ tested by every condition below};
+\draw[note, -{Straight Barb[scale=0.5]}] (13.4,-1.15) -- (13.4,-3.7);
+
+\Note{-3.7}{-5.7}{-5.1}{%
+  \texttt{define\_expand} --- \textbf{where the synthesis happens.}\\
+  With \texttt{-mno-shift}, \texttt{ashlsi3} expands to a chain of
+  \texttt{add}\\
+  instructions and calls \texttt{DONE}, so the \texttt{sll} pattern is never\\
+  reached: the operation ceases to exist as RTL.}
+\Note{-6.5}{-8.0}{-7.35}{%
+  \texttt{define\_insn\_and\_split} --- splits that must run\\
+  after register allocation, such as replacing\\
+  \texttt{andi rd,rs,0xff} by \texttt{li} + \texttt{and}.}
+\Note{-8.5}{-10.0}{-9.3}{%
+  \texttt{define\_insn} --- output templates. A pattern whose\\
+  condition is false (\texttt{TARGET\_SHIFT} on rvsc1) is\\
+  invisible to instruction selection.}
+
+\end{tikzpicture}
+
+\vspace{0.4em}
+{\footnotesize\color{black!60}\raggedright
+The RTL expansion pass is where the synthesis of this work happens: a
+\texttt{define\_expand} guarded by a \texttt{-mno-} flag emits a replacement
+sequence and calls \texttt{DONE}, so the absent instruction never enters RTL and
+no later pass can reintroduce it.\par}
+
+\end{SingleSpace}
+\caption{GCC compilation pipeline and the machine-description construct acting
+         at each step}
+\label{fig:pipeline}
+\end{figure}

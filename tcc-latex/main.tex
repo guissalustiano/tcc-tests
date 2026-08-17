@@ -68,6 +68,10 @@
 \usepackage{booktabs}			% Tabelas com \toprule, \midrule, \bottomrule
 \usepackage{listings}			% Blocos de código-fonte
 \usepackage{xcolor}				% Cores para listings
+\usepackage{array}				% Colunas de tabela com largura fixa (p{...})
+\usepackage[htt]{hyphenat}		% Permite quebra de linha em \texttt (nomes de arquivo, flags)
+\usepackage{tikz}				% Diagramas (datapath, pipeline, gráfico Embench)
+\usetikzlibrary{arrows.meta}
 % ---
 
 % ---
@@ -372,8 +376,8 @@
    \vspace*{\fill}
    \centering
    \noindent
-   \textit{Para que serve tantos codigos, se a vida nao é programada\\
-   e as melhores coisas não tem logica.} \vspace*{\fill}
+   \textit{Para que servem tantos códigos, se a vida não é programada\\
+   e as melhores coisas não têm lógica.} \vspace*{\fill}
 \end{dedicatoria}
 % ---
 
@@ -381,9 +385,24 @@
 % Agradecimentos
 % ---
 \begin{agradecimentos}
-The main acknowledgements are directed to \ldots
+% Personal thanks are deliberately generic below; add names as you see fit.
+I thank my advisor, Prof. Bruno de Carvalho Albertini, for proposing a problem that sits exactly
+on the boundary between the hardware a student builds and the software a student writes, and for
+the guidance and the freedom that let it grow into this work.
 
-% TODO: fill acknowledgements
+I thank the Department of Computer and Digital Systems Engineering (PCS) of the Escola Politécnica
+at the University of São Paulo, and in particular the teaching staff and the students of PCS3225
+--- Digital Systems 2. That course is both the reason these compiler targets exist and the setting
+they were built for.
+
+This work rests on a great deal of freely available engineering. The GCC developers, whose machine
+description framework turns instruction synthesis into a matter of declaring patterns rather than of
+writing a compiler from scratch; the maintainers of the upstream RISC-V backend, on which all eight
+targets are built; and the authors of Spike, GNU Binutils, newlib and Embench-IoT, without which
+none of the validation reported in Chapter~\ref{cap:results} would have been possible.
+
+Finally, I thank my family and my friends, for their support and their patience through the
+stretches when this work had all of my attention.
 \end{agradecimentos}
 % ---
 
@@ -419,10 +438,14 @@ incluem XOR bit a bit, todos os tipos de deslocamento (SLL, SRL, SRA), comparaç
 formal de corretude e implementada como um padrão de expansão na descrição de máquina do GCC.
 
 A corretude é validada em duas camadas independentes: a conformidade com a ISA é verificada por
-desmontagem de cada binário compilado e checagem de cada mnemônico contra uma lista de permissão
-por alvo; a equivalência comportamental é verificada por execução diferencial no Spike em comparação
-com um compilador de referência RV32I. Adicionalmente, os alvos são validados contra um subconjunto
-da suíte de testes de tortura do GCC.
+desmontagem de cada objeto compilado --- e, no rvsc1, também de cada executável ligado --- e
+checagem de cada mnemônico contra uma lista de permissão por alvo; a equivalência comportamental é
+verificada executando no Spike programas de teste autovalidantes, que conferem cada resultado contra
+valores calculados independentemente no próprio programa e sinalizam a primeira asserção violada por
+um código de saída distinto. Adicionalmente, o rvsc1 é validado contra a suíte de testes de tortura
+do GCC, cujos 1\,684 programas são compilados e executados em cinco níveis de otimização: todas as
+8\,345 combinações que este alvo \textit{freestanding} consegue compilar e ligar terminam
+corretamente.
 
 O resultado é uma \textit{toolchain} funcional que permite a estudantes compilar programas C
 arbitrários e executá-los no processador que projetaram, fechando o ciclo pedagógico entre a
@@ -449,9 +472,13 @@ SB, SH), and function calls (JAL). Each synthesis is derived from a formal corre
 implemented as a GCC machine-description expand pattern.
 
 Correctness is validated on two independent layers: ISA compliance is verified by disassembling
-every compiled binary and checking every mnemonic against a per-target allowlist; behavioral
-equivalence is verified by differential execution on Spike against a reference RV32I compiler.
-Additionally, the targets are validated against a subset of the GCC compiler torture test suite.
+every compiled object --- and, for rvsc1, every linked executable --- and checking every mnemonic
+against a per-target allowlist; behavioral equivalence is verified by executing self-validating test
+programs on Spike, each of which checks its computed results against values derived independently
+within the same program and signals the first violated assertion through a distinct exit code.
+Additionally, rvsc1 is validated against the GCC compiler torture test suite, whose 1\,684 programs
+are compiled and executed at five optimization levels: all 8\,345 combinations this freestanding
+target can compile and link terminate correctly.
 
 The result is a working toolchain that allows students to compile arbitrary C programs and execute
 them on the processor they designed, closing the pedagogical loop between hardware implementation
@@ -518,7 +545,6 @@ and software abstraction.
   \item[GCC] \textit{GNU Compiler Collection}
   \item[GNU] \textit{GNU's Not Unix}
   \item[ISA] \textit{Instruction Set Architecture}
-  \item[PIC] \textit{Position-Independent Code}
   \item[RISC] \textit{Reduced Instruction Set Computer}
   \item[RTL] \textit{Register Transfer Language}
   \item[RV32I] RISC-V, integers, 32 bits
@@ -574,7 +600,7 @@ and software abstraction.
 % ----------------------------------------------------------
 % Referências bibliográficas
 % ----------------------------------------------------------
-\bibliography{abntex2-modelo-references}
+\bibliography{refs}
 
 % ----------------------------------------------------------
 % Glossário

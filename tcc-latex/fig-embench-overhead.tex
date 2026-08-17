@@ -1,0 +1,107 @@
+% Per-benchmark static and dynamic overhead of rvsc1 synthesis.
+%
+% TikZ port of the chart in figures/embench.typ.  Both series are ratios
+% against an unsynthesized build of the same source, so 1x is parity and the
+% axis is logarithmic: the spread runs over almost two orders of magnitude, and
+% on a linear axis every benchmark under 10x would collapse against the left
+% edge.  Tables~\ref{tab:embench-size} and \ref{tab:embench-perf} carry the
+% exact figures; what the chart is for is the shape of the distribution, which
+% 19 rows of digits hide.
+%
+% The two series differ in lightness rather than in hue, so the figure survives
+% greyscale printing, and only the extremes are labelled.  Rows are ordered by
+% dynamic overhead, descending: the ordering is itself the finding.
+%
+% Data below is transcribed from tests/embench-iot/{size,perf}.csv at backend
+% revision 32d629dcf2e (measured 2026-08-09); re-running the harness means
+% re-transcribing this list and the two tables together.
+\begin{figure}[htb]
+\centering
+\begin{SingleSpace}
+\begin{tikzpicture}[
+  x=1cm, y=1cm,
+  font=\sffamily\scriptsize,
+  gridline/.style={draw=black!22, line width=0.35pt},
+  axisline/.style={draw=black!50, line width=0.45pt},
+  ticklbl/.style={text=black!55, font=\sffamily\tiny},
+  barlbl/.style={text=black!55, font=\sffamily\tiny, anchor=west},
+  namelbl/.style={anchor=east, font=\sffamily\tiny},
+]
+
+% plot geometry, in canvas units
+\def\plotw{10.9}   % plot width
+\def\rowh{0.5}     % vertical pitch, one benchmark
+\def\barh{0.18}    % bar thickness
+\def\xmax{55}      % upper end of the logarithmic axis
+
+\definecolor{staticfill}{gray}{0.18}
+\definecolor{dynamicfill}{gray}{0.69}
+
+% x(v) = plotw * log(v) / log(xmax); always used inside braces so that pgfmath
+% evaluates the whole expression, including any offset added at the call site.
+\newcommand{\lx}[1]{\plotw*ln(#1)/ln(\xmax)}
+
+% --- grid and axis --------------------------------------------------------
+\foreach \t in {1,2,5,10,20,50}{%
+  \draw[gridline] ({\lx{\t}},0) -- ({\lx{\t}},-9.5);
+  \node[ticklbl, anchor=north] at ({\lx{\t}},-9.74) {\t$\times$};}
+\draw[axisline] (0,-9.5) -- (\plotw,-9.5);
+
+% --- bars: name / static ratio / dynamic ratio, ordered by dynamic ---------
+\foreach [count=\i from 0] \name/\st/\dy in {%
+  xgboost/15.15/59.2,
+  tarfind/9.04/50.1,
+  ud/1.37/39.1,
+  qrduino/22.27/30.9,
+  picojpeg/13.10/30.1,
+  nettle-aes/26.47/26.6,
+  sglib-combined/3.20/26.0,
+  crc32/4.61/24.8,
+  huffbench/7.45/23.3,
+  nettle-sha256/19.85/21.5,
+  aha-mont64/8.02/15.1,
+  slre/10.43/14.5,
+  depthconv/9.57/11.5,
+  md5sum/3.09/7.1,
+  edn/18.29/6.9,
+  wikisort/5.01/6.3,
+  statemate/3.88/5.9,
+  nsichneu/2.47/3.8,
+  matmult-int/1.60/3.5}{%
+  \pgfmathsetmacro{\yc}{-(\i+0.5)*\rowh}
+  \node[namelbl] at (-0.15,\yc) {\texttt{\name}};
+  \fill[staticfill]  (0,{\yc+0.03}) rectangle ({\lx{\st}},{\yc+0.03+\barh});
+  \fill[dynamicfill] (0,{\yc-0.03-\barh}) rectangle ({\lx{\dy}},{\yc-0.03});}
+
+% Only the extremes are labelled; the tables carry every figure.
+\node[barlbl] at ({\lx{59.2}+0.12},{-0.5*\rowh-0.03-\barh/2})  {59.2$\times$};
+\node[barlbl] at ({\lx{1.37}+0.12},{-2.5*\rowh+0.03+\barh/2})  {1.4$\times$};
+\node[barlbl] at ({\lx{26.47}+0.12},{-5.5*\rowh+0.03+\barh/2}) {26.5$\times$};
+\node[barlbl] at ({\lx{3.5}+0.12},{-18.5*\rowh-0.03-\barh/2})  {3.5$\times$};
+
+% --- legend ---------------------------------------------------------------
+\fill[staticfill]  (0,0.35) rectangle (0.34,0.53);
+\node[anchor=west, font=\sffamily\tiny] at (0.46,0.44)
+  {static (\texttt{.text} bytes)};
+\fill[dynamicfill] (3.5,0.35) rectangle (3.84,0.53);
+\node[anchor=west, font=\sffamily\tiny] at (3.96,0.44)
+  {dynamic (retired instructions)};
+
+\end{tikzpicture}
+
+\vspace{0.4em}
+{\footnotesize\color{black!60}\raggedright
+Each benchmark contributes two ratios against an unsynthesized build of the same
+source: \texttt{.text} bytes (\texttt{rvsc1 / gcc17},
+Table~\ref{tab:embench-size}) and retired instructions
+(\texttt{rvsc1 / rvsc2}, Table~\ref{tab:embench-perf}). The axis is logarithmic,
+so equal distances are equal factors and $1\times$ is parity; benchmarks are
+ordered by dynamic overhead. The two orderings are not the same one:
+\texttt{edn} is the only benchmark that costs more in size than in time,
+\texttt{nettle-aes} pays almost the same factor on both, and \texttt{ud} pays
+$1.37\times$ in size against $39.1\times$ in time.\par}
+
+\end{SingleSpace}
+\caption{Static and dynamic cost of rvsc1 synthesis, per benchmark}
+\label{fig:embench-overhead}
+\end{figure}

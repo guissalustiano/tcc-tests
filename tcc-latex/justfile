@@ -1,0 +1,47 @@
+# LaTeX build for the abntex2 edition of the TCC.
+#
+# `main.typ` at the repo root is the source of record; this directory is the
+# abntex2/Overleaf edition kept in sync with it.  Everything here is driven by
+# latexmk, which runs pdflatex, bibtex and makeindex until the document reaches
+# a fixed point.  That loop is not optional for this document: the ficha
+# catalográfica prints the final page count, so the page numbering does not
+# settle until a later pass, and `\ref` to a forward table needs another.
+#
+# The toolchain comes from the project dev shell (default.nix).  It is a trimmed
+# texlive.combine rather than a full scheme; if a new \usepackage fails to find
+# its .sty, add the CTAN package name to the `tex` list in default.nix.
+
+default: build
+
+# Build to a fixed point, then fail if the log reports anything.
+build: compile check
+
+# latexmk to a fixed point (pdflatex + bibtex + makeindex as needed).
+compile:
+    latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex
+
+# One pdflatex pass. Fast while writing prose; cross-references and citations
+# will be whatever the last full build left in main.aux.
+quick:
+    pdflatex -interaction=nonstopmode -halt-on-error main.tex
+
+# Rebuild on every save and keep a viewer open on the result.
+watch:
+    latexmk -pdf -pvc -interaction=nonstopmode main.tex
+
+# Report undefined references and citations, duplicate labels, and text in the
+# margin, each attributed to the file it came from. Nonzero exit on any of them.
+check:
+    python3 check_log.py main.log
+
+# Same, but list every overfull box rather than only the ones over 20pt.
+check-strict:
+    python3 check_log.py main.log --overfull 0.1
+
+# Remove build artifacts, keeping main.pdf.
+clean:
+    latexmk -c
+
+# Remove build artifacts and main.pdf.
+distclean:
+    latexmk -C

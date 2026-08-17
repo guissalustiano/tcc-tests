@@ -11,6 +11,23 @@ let
   # with the sc1 toolchain only emit sc1-subset instructions regardless; ISA
   # compliance is verified separately by torture_isa.py.
   pk-rv32 = pkgs.pkgsCross.riscv32-embedded.riscv-pk;
+
+  # LaTeX for tcc-latex/, the abntex2 edition of the document.  The medium
+  # scheme plus the nine packages abntex2 and this document add on top of it: a
+  # full scheme is several gigabytes for the sake of those nine.  The abntex2
+  # class itself is not from CTAN here — the .cls and .sty live in tcc-latex/.
+  #
+  # To find what a new \usepackage needs, build once against a full scheme and
+  # read the recorder output:
+  #   nix-shell -p texliveFull --run 'pdflatex -recorder main.tex' && \
+  #     grep '^INPUT' main.fls | grep texmfdist/tex/ | cut -d/ -f6 | sort -u
+  # then add whichever names below are missing.
+  tex = pkgs.texliveMedium.withPackages (ps: with ps; [
+    latexmk                                       # drives the pdflatex/bibtex loop
+    enumitem relsize xpatch textcase              # required by abntex2.cls
+    pdfpages eso-pic pdflscape                    # ficha catalográfica, landscape floats
+    hyphenat                                      # line breaks inside \texttt paths
+  ]);
 in
 
 pkgs.mkShell {
@@ -67,6 +84,7 @@ pkgs.mkShell {
     # Document
     typst
     liberation_ttf
+    tex          # tcc-latex/: pdflatex, bibtex, makeindex, latexmk
   ];
 
   shellHook = ''

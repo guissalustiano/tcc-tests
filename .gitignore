@@ -104,13 +104,19 @@ main.pdf
 /tcc-latex/*.bbl
 /tcc-latex/*.blg
 /tcc-latex/*.brf
+/tcc-latex/*.fdb_latexmk
+/tcc-latex/*.fls
 /tcc-latex/*.idx
+/tcc-latex/*.ilg
+/tcc-latex/*.ind
 /tcc-latex/*.lof
 /tcc-latex/*.log
 /tcc-latex/*.loq
 /tcc-latex/*.lot
+/tcc-latex/*.out
 /tcc-latex/*.pdf
 /tcc-latex/*.toc
+/tcc-latex/__pycache__/
 
 # GCC IRA/dump files generated during testing
 *.ira

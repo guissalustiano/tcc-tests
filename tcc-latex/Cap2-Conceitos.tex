@@ -3,25 +3,87 @@
 % ---------------------------------------------------------------
 \chapter{Related Work} \label{cap:related-work}
 
-The two bodies of work most relevant to this project are GCC's established mechanisms for synthesizing
-hardware-absent operations, applied in the embedded domain for decades, and pedagogical tools for
-instruction-set-level computing education.
+Three bodies of work bear on this project: GCC's established mechanisms for synthesizing
+hardware-absent operations, applied in the embedded domain for decades; the search for optimal
+instruction sequences and the compilers written for deliberately minimal instruction sets; and
+pedagogical tools for instruction-set-level computing education.
 
 \section{Instruction Synthesis in Compiler Backends}
 
 GCC has long supported targets whose processors lack hardware instructions for certain operations. The
-canonical example is soft-float: on targets without a floating-point unit, all floating-point
-operations are transparently replaced by sequences of integer instructions, with no change required
-from the programmer \cite{gcc-internals}. The same approach has been applied to integer operations on
-embedded targets such as the MSP430, which lacks a barrel shifter, and the AVR, which lacks a hardware
-multiplier on some variants \cite{gcc-internals}. In all cases the programmer writes standard C, and
-the compiler silently emits the necessary replacement sequences, at the cost of additional instructions
-and a correspondingly larger binary. \citeonline{hauser2020} quantify this effect for embedded RISC-V
-targets, showing that backend choices have a measurable impact on code size.
+canonical example is soft-float: on a target without a floating-point unit, the compiler replaces every
+floating-point operation by a call to a library routine that implements IEEE~754 arithmetic with
+integer instructions, with no change required from the programmer \cite{gcc-internals}. Two properties
+of that substitution matter here, and both reappear in this work. The first is that the replacement is
+a body of carefully validated software arithmetic rather than an incidental expansion: the Berkeley
+SoftFloat package \cite{softfloat} is the reference implementation of that kind, and is the arithmetic
+model inside the Spike simulator against which this work validates its own output. The second is that
+the substitution is an ABI contract rather than a private decision of one compiler. The Arm run-time
+ABI \cite{arm-rtabi} names each helper routine and fixes its calling convention, so that soft-float
+objects produced by different compilers interoperate; GCC documents the equivalent set for its own
+targets as part of libgcc \cite{gcc-internals}, where the same mechanism extends to integer operations,
+with routines such as \texttt{\_\_mulsi3} and \texttt{\_\_ashlsi3} existing precisely because some
+targets have neither a multiplier nor a multi-bit shift.
 
-This work applies the same principle to a more extreme case: the sc0 and sc1 targets must synthesize
-not just a handful of absent operations, but nearly every operation the processor does not natively
-support, because their instruction sets are far smaller than those of typical embedded targets.
+Those integer cases are the closest existing precedent for this work. The MSP430 has no multi-bit shift
+instruction: a shift by more than one position is either a repeated single-bit operation or a call to
+one of the runtime helpers the MSP430 embedded ABI defines for the purpose, among them
+\texttt{\_\_mspabi\_slli\_n}, \texttt{\_\_mspabi\_srli\_n} and their long and arithmetic variants
+\cite{msp430-eabi,msp430-ug}. The AVR is more restricted still. Its shift and rotate instructions move
+exactly one bit \cite{avr-isa}, so GCC's AVR backend emits a straight-line run of \texttt{lsl} or
+\texttt{lsr} for a small constant count and a counted loop for a variable one --- the same two
+constructions this work derives for rvsc1 in Section~\ref{sec:sc1-sll}, reached independently from the
+same constraint. Hardware multiplication is likewise present only on the enhanced AVR cores; on the
+classic and reduced-tiny devices \texttt{\_\_mulqi3} and \texttt{\_\_mulhi3} are shift-and-add routines
+in libgcc \cite{avr-isa}. \citeonline{hauser2020} quantify what such substitutions cost on embedded
+RISC-V targets, showing that backend choices have a measurable impact on code size.
+
+In all these cases the programmer writes standard C and the compiler silently emits the replacement
+sequence, at the cost of additional instructions and a correspondingly larger binary. What
+distinguishes the present work is the proportion of the instruction set involved. A soft-float or
+multiplier-less target is missing a category of operations; the sc0 and sc1 targets are missing nearly
+everything, and must synthesize shifts, exclusive or, ordered comparisons, all conditional branches
+other than \texttt{beq}, every sub-word load and store, and --- on sc0 --- the loading of a large
+constant, out of eight or ten remaining instructions.
+
+\section{Optimal and Minimal Instruction Sequences}
+
+A second line of work asks not how to replace a missing instruction, but how to find the shortest
+sequence of available instructions that computes a given function. \citeonline{massalin1987} built the
+first superoptimizer, searching exhaustively over short sequences and testing each candidate against
+the specification of the operation; it found sequences shorter than those any compiler of the time
+produced, including branch-free implementations of operations normally written with conditionals.
+\citeonline{granlund1992} brought the technique into GCC itself: they used a superoptimizer to discover
+branch-free sequences for comparisons and conditional operations on several architectures, then wrote
+the results into the machine descriptions. That is precisely the form the results of this work take ---
+a sequence established once and then installed in a \texttt{define\_expand}. \citeonline{bansal2006}
+later automated the harvesting step, generating peephole optimizers by enumerating and verifying
+candidate sequences offline.
+
+Each synthesis derived in Section~\ref{sec:sc1-synthesis} is therefore a hand-written answer to the
+question a superoptimizer answers by search, over a target whose instruction set is small enough that
+the search space for a single operation would be correspondingly small. The derivations here are
+algebraic arguments, and are proved rather than sampled, which is what allows a claim about all inputs;
+a search-based derivation over the same subset, verified the same way, would be a natural extension.
+
+At the far end of the same axis are instruction sets designed to be as small as an instruction set can
+be. The one-instruction set computer, whose classic presentation is the URISC of \citeonline{urisc},
+executes a single instruction --- subtract and branch if the result is less than or equal to zero ---
+from which every other operation is constructed; URISC was proposed, like the processor this work
+targets, as a teaching vehicle. \citeonline{subleq} carry the construction into a working system,
+implementing an array of subleq processors on an FPGA together with a compiler from a C-like language,
+and so show that a high-level language can be compiled to one instruction. \citeonline{dolan2013} makes
+the corresponding point about an existing architecture, proving that the x86 \texttt{mov} instruction
+is Turing-complete on its own, and the movfuscator of \citeonline{movfuscator} is the compiler that
+follows from that proof, translating C into x86 programs that contain essentially no other instruction.
+
+This work shares its question with those --- how little instruction set a compiled high-level language
+actually needs --- but answers it under different constraints. Those projects are free to choose the
+instruction set that makes the argument, and to accept whatever performance the demonstration costs.
+Here the instruction set is fixed in advance by a textbook chapter and by what students build in a
+laboratory, the generated code must observe the standard RISC-V ABI so that it links against ordinary
+libraries and runs under an unmodified simulator, and the cost of each substitution is a quantity the
+work is obliged to measure (Chapter~\ref{cap:results}) rather than to disregard.
 
 \section{Pedagogical Instruction-Set Tools}
 
@@ -34,10 +96,12 @@ BRISC-V \cite{brisc-v} provides an open-source parameterised RISC-V processor fa
 architecture education together with a standard GCC toolchain. The toolchain targets the full RV32I
 instruction set, with no mechanism to restrict the compiler to a hardware-defined subset.
 
-This work sits at the intersection of these two lines: it brings the instruction synthesis approach
-from the embedded compiler domain into the pedagogical setting of the Hennessy-Patterson processor
-\cite{patterson2020}, enabling students to write C programs that run correctly on a processor with a
-deliberately minimal instruction set.
+This work sits at the intersection of the three lines: it brings the instruction synthesis approach
+from the embedded compiler domain, applied to a subset small enough to raise the minimal-instruction-set
+question, into the pedagogical setting of the Hennessy-Patterson processor \cite{patterson2020},
+enabling students to write C programs that run correctly on a processor with a deliberately minimal
+instruction set --- one they built themselves, which is what the assembly-level simulators and the
+full-ISA toolchains each leave out.
 
 
 % ---------------------------------------------------------------
@@ -82,6 +146,8 @@ the current program counter (PC); a register file with two read ports and one wr
 logic unit (ALU) that performs the operation selected by the control unit; a data memory for load and
 store operations; and a set of multiplexers that route operands and results under control of the
 control signals derived from the instruction opcode \cite{patterson2020}.
+Figure~\ref{fig:datapath} shows these components and their interconnection for the eight-instruction
+subset this work targets.
 
 The control unit decodes the instruction's opcode field and drives the multiplexer select lines and the
 register file write-enable. For a given instruction set, each instruction class has a fixed set of
@@ -112,6 +178,16 @@ has no hardware for PC-relative address computation (no AUIPC path), no mechanis
 upper immediate into a register (no LUI path), and no register-to-PC write path that also captures
 the return address (no JALR path). Executing any instruction outside the supported set produces
 undefined results.
+
+\input{fig-datapath}
+
+The two absences that matter most for a compiler are visible in the figure as multiplexer inputs that
+were never built. Without an upper-immediate input to the write-back multiplexer there is no single
+instruction that places a large constant in a register, and without a PC-to-register path there is no
+instruction that records a return address, which is what makes function calls impossible on rvsc0
+(Section~\ref{sec:sc0-no-calls}). Every other restriction the subset imposes is an absent decode case
+rather than an absent wire: the ALU and the branch comparator are already there, so \texttt{xor}, the
+shifts and the ordered branches can be rebuilt out of the operations the datapath does route.
 
 \section{C Calling Convention and ABI}
 
@@ -176,7 +252,8 @@ dominant toolchain for embedded and systems software \cite{gcc-internals}. It tr
 languages) to machine code through a sequence of intermediate representations that progressively lower
 the abstraction level.
 
-The compilation pipeline proceeds as follows \cite{gcc-internals}. The language frontend parses source
+The compilation pipeline proceeds as follows \cite{gcc-internals}, and is summarised in
+Figure~\ref{fig:pipeline}. The language frontend parses source
 code and produces an abstract syntax tree (AST). The AST is lowered to GIMPLE, a high-level,
 language-independent, statement-level intermediate representation in static single-assignment (SSA)
 form. The middle-end applies target-independent optimisations to GIMPLE (constant folding, inlining,
@@ -209,6 +286,16 @@ primary construct types:
 Code iterators (such as \texttt{any\_shift}) allow a single \texttt{define\_expand} to cover multiple
 related operations (ASHIFT, LSHIFTRT, ASHIFTRT) in one body, with runtime-constant guards like
 \texttt{(<CODE>) == ASHIFT} selecting the appropriate synthesis path.
+
+\input{fig-pipeline}
+
+The position of that expansion step in the pipeline determines what the rest of this work can and
+cannot do. Because synthesis happens as GIMPLE is lowered to RTL, every subsequent pass, register
+allocation included, sees only the replacement sequence and optimises it as ordinary code, which is
+what makes the synthesis transparent. The same position also explains the loss discussed in
+Section~\ref{sec:sc1-corner-cases}: once an \texttt{xor} has become an \texttt{and}, an \texttt{or} and
+a \texttt{sub}, no later pass can recognise the algebraic identities of the operation it replaced, so
+any identity worth exploiting must be folded inside the expansion body itself.
 
 Target-specific command-line options are declared in a \texttt{.opt} file using GCC's
 option-description syntax \cite{gcc-internals}. Each declaration generates a C preprocessor macro

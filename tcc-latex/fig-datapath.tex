@@ -1,0 +1,173 @@
+% Single-cycle datapath of the Hennessy-Patterson eight-instruction subset.
+%
+% TikZ port of figures/datapath.typ, so that the LaTeX and Typst editions of
+% this document carry the same figure from the same coordinates.  Layout
+% conventions:
+%   - solid black lines : datapath (values)
+%   - dashed grey lines : control signals
+%   - dashed grey box   : paths the subset does *not* have
+%
+% Canvas units are the same as in the Typst source; x=y=0.85cm reproduces the
+% original scale, which fits the 16 cm text block.
+\begin{figure}[htb]
+\centering
+\begin{SingleSpace}
+\begin{tikzpicture}[
+  x=0.85cm, y=0.85cm,
+  font=\sffamily\fontsize{6.5}{7.5}\selectfont,
+  unit/.style={draw, fill=black!4, inner sep=0pt, align=center},
+  muxbox/.style={draw, fill=black!12, inner sep=0pt},
+  wire/.style={-{Straight Barb[scale=0.55]}, line width=0.5pt},
+  plain/.style={line width=0.5pt},
+  ctrl/.style={-{Straight Barb[scale=0.5]}, draw=black!55, dashed,
+               line width=0.4pt},
+  ctrlplain/.style={draw=black!55, dashed, line width=0.4pt},
+  absent/.style={draw=black!45, dashed, line width=0.4pt},
+  clbl/.style={text=black!60, align=center,
+               font=\sffamily\fontsize{5.5}{6.5}\selectfont\itshape},
+  port/.style={inner sep=1pt,
+               font=\sffamily\fontsize{5}{6}\selectfont},
+  jdot/.style={circle, fill, inner sep=0.7pt},
+]
+
+% --- blocks --------------------------------------------------------------
+\newcommand{\Unit}[5]{%
+  \path[unit] (#1,#2) rectangle (#3,#4);
+  \node[align=center] at ({(#1+#3)/2},{(#2+#4)/2}) {#5};}
+\newcommand{\Mux}[4]{%
+  \path[muxbox] (#1,#2) rectangle (#3,#4);
+  \node[rotate=-90, font=\sffamily\fontsize{5}{6}\selectfont]
+    at ({(#1+#3)/2},{(#2+#4)/2}) {MUX};}
+
+\Mux{0}{-0.9}{0.5}{0.9}
+\Unit{1.15}{-0.45}{2.0}{0.45}{PC}
+\Unit{2.9}{-0.95}{4.6}{0.95}{Instruction\\memory}
+\path[unit] (5.7,-1.35) rectangle (7.6,1.15);
+\node at (6.65,0.95) {Register file};
+\Unit{5.7}{-2.75}{7.3}{-1.95}{Imm\\gen}
+\Mux{8.2}{-1.55}{8.7}{0.35}
+\Unit{9.35}{-1.35}{10.85}{1.05}{ALU}
+\path[unit] (11.5,-1.55) rectangle (13.45,0.75);
+\node at (12.475,0.55) {Data memory};
+\Mux{14.0}{-1.25}{14.5}{0.9}
+\Unit{2.9}{-4.05}{4.6}{-3.05}{Control}
+\Unit{3.3}{2.3}{4.6}{3.0}{PC + 4}
+\Unit{5.7}{3.55}{7.4}{4.3}{PC + imm}
+
+% --- instruction fetch ---------------------------------------------------
+\draw[wire]  (0.5,0)  -- (1.15,0);
+\draw[plain] (2.0,0)  -- (2.45,0);
+\draw[wire]  (2.45,0) -- (2.9,0);
+\node[jdot] at (2.45,0) {};
+
+% PC feeding the two address adders
+\draw[plain] (2.45,0)   -- (2.45,4.9);
+\node[jdot] at (2.45,1.9) {};
+\draw[plain] (2.45,1.9) -- (4.2,1.9);
+\draw[wire]  (4.2,1.9)  -- (4.2,2.3);
+\draw[plain] (2.45,4.9) -- (6.55,4.9);
+\draw[wire]  (6.55,4.9) -- (6.55,4.3);
+
+% PC + 4 back to the PC multiplexer
+\draw[plain] (3.3,2.65)   -- (-0.65,2.65) -- (-0.65,0.5);
+\draw[wire]  (-0.65,0.5)  -- (0,0.5);
+
+% branch target back to the PC multiplexer
+\draw[plain] (7.4,3.925) -- (8.0,3.925) -- (8.0,5.4) -- (-1.15,5.4)
+                         -- (-1.15,0);
+\draw[wire]  (-1.15,0)   -- (0,0);
+
+% --- decode --------------------------------------------------------------
+\draw[plain] (4.6,0.2) -- (5.7,0.2);
+\node[jdot] at (4.85,0.2) {};
+\draw[plain] (4.85,0.2)  -- (4.85,-3.55);
+\draw[wire]  (4.85,-3.55) -- (4.6,-3.55);
+\node[jdot] at (5.15,0.2) {};
+\draw[plain] (5.15,0.2)   -- (5.15,-2.35);
+\draw[wire]  (5.15,-2.35) -- (5.7,-2.35);
+
+% immediate to the branch adder
+\draw[plain] (5.7,-2.6) -- (5.4,-2.6) -- (5.4,3.9);
+\draw[wire]  (5.4,3.9)  -- (5.7,3.9);
+
+% --- execute -------------------------------------------------------------
+\draw[wire]  (7.6,0.55)   -- (9.35,0.55);
+\draw[wire]  (7.6,-0.25)  -- (8.2,-0.25);
+\draw[plain] (7.3,-2.35)  -- (7.95,-2.35) -- (7.95,-1.15);
+\draw[wire]  (7.95,-1.15) -- (8.2,-1.15);
+\draw[wire]  (8.7,-0.6)   -- (9.35,-0.6);
+
+% --- memory --------------------------------------------------------------
+\draw[plain] (10.85,-0.1) -- (11.15,-0.1);
+\draw[wire]  (11.15,-0.1) -- (11.5,-0.1);
+\node[jdot] at (11.15,-0.1) {};
+\draw[plain] (11.15,-0.1) -- (11.15,1.45) -- (13.7,1.45) -- (13.7,0.55);
+\draw[wire]  (13.7,0.55)  -- (14.0,0.55);
+\draw[wire]  (13.45,-0.6) -- (14.0,-0.6);
+
+% store data: second register read port to the data memory
+\node[jdot] at (7.75,-0.25) {};
+\draw[plain] (7.75,-0.25) -- (7.75,-1.75) -- (11.25,-1.75) -- (11.25,-1.2);
+\draw[wire]  (11.25,-1.2) -- (11.5,-1.2);
+
+% --- write back ----------------------------------------------------------
+\draw[plain] (14.35,-1.25) -- (14.35,-3.4) -- (6.4,-3.4);
+\draw[wire]  (6.4,-3.4)    -- (6.4,-1.35);
+
+% --- control -------------------------------------------------------------
+\draw[ctrlplain] (3.75,-4.05) -- (3.75,-4.4);
+\draw[ctrlplain] (0.25,-4.4)  -- (14.9,-4.4);
+\draw[ctrl] (0.25,-4.4) -- (0.25,-0.9);
+\draw[ctrl] (7.45,-4.4) -- (7.45,-1.35);
+\draw[ctrl] (8.45,-4.4) -- (8.45,-1.55);
+\draw[ctrl] (12.8,-4.4) -- (12.8,-1.55);
+\draw[ctrlplain] (14.9,-4.4) -- (14.9,-0.2);
+\draw[ctrl] (14.9,-0.2) -- (14.5,-0.2);
+% Signal names sit under their riser, staggered over two rows so the longer
+% ones do not run into each other.
+\node[clbl, below] at (0.25,-5.25) {PCSrc = Branch $\wedge$ Zero};
+\node[clbl, below] at (7.45,-4.7)  {RegWrite};
+\node[clbl, below] at (8.45,-5.25) {ALUSrc};
+\node[clbl, below] at (12.8,-5.25) {MemRead / MemWrite};
+\node[clbl, below] at (14.9,-4.7)  {MemtoReg};
+
+\draw[ctrl] (9.7,-4.4) -- (9.7,-1.35);
+\node[clbl, below] at (9.7,-4.7) {ALUOp};
+
+% ALU zero flag back to the control unit
+\draw[ctrl] (10.4,-1.35) -- (10.4,-4.4);
+\node[clbl, right] at (10.55,-2.55) {Zero};
+
+% --- port labels, inside the blocks they belong to -----------------------
+\node[port, left]  at (7.5,0.55)   {read data 1};
+\node[port, left]  at (7.5,-0.25)  {read data 2};
+\node[port, right] at (5.8,-1.05)  {write data};
+\node[port, right] at (11.6,-0.1)  {address};
+\node[port, right] at (11.6,-1.2)  {write data};
+\node[port, left]  at (13.35,-0.6) {read data};
+
+% --- what the subset does not have ---------------------------------------
+\path[absent] (9.6,2.2) rectangle (16.65,4.7);
+\node[anchor=north west, text=black!55, align=left,
+      font=\sffamily\fontsize{5.5}{6.8}\selectfont]
+  at (9.8,4.55) {%
+    \textbf{Absent in the eight-instruction subset}\\
+    no upper-immediate path into the register file (\texttt{lui})\\
+    no PC + 4 write-back into the register file (\texttt{jal}, \texttt{jalr})\\
+    no register $\rightarrow$ PC path (\texttt{jalr})\\
+    no PC-relative address path (\texttt{auipc})};
+\draw[absent, -{Straight Barb[scale=0.5]}] (14.25,2.2) -- (14.25,0.95);
+
+\end{tikzpicture}
+
+\vspace{0.4em}
+{\footnotesize\color{black!60}\raggedright
+Solid lines carry values and dashed grey lines carry control signals. The
+dashed box lists the paths this datapath does not have; each of them is the
+hardware reason for a synthesis derived in Section~\ref{sec:sc1-synthesis}.\par}
+
+\end{SingleSpace}
+\caption{Single-cycle datapath of the eight-instruction subset, adapted from
+         \citeonline{patterson2020}}
+\label{fig:datapath}
+\end{figure}

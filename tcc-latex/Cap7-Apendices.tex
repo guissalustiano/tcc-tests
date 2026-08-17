@@ -75,23 +75,96 @@ example:
 \end{lstlisting}
 
 
-\chapter{SLL Synthesis Assembly} \label{apx:sll-asm}
+\chapter{SLL Synthesis Assembly (Constant Count)} \label{apx:sll-const-asm}
+
+Real compiler output (\nolinkurl{rvsc1-unknown-elf-gcc -S -O1}) for \texttt{shift3} from
+\nolinkurl{tests/sc1/tests/isa/shift.c} (\texttt{x << 3}, so $b = 3$):
 
 \begin{lstlisting}
-# rd = rs1 << rs2
-    add   t1, rs2, x0    # t1 = rs2 (save shift count; rd may alias rs2)
-    add   rd, rs1, x0    # rd = rs1
-    beq   t1, x0, done   # if rs2 == 0, no shift needed
-loop:
-    add   rd, rd, rd     # rd <<= 1
-    addi  t1, t1, -1
-    beq   t1, x0, done
-    beq   x0, x0, loop
-done:
+shift3:
+    add   a0, a0, a0
+    add   a0, a0, a0
+    add   a0, a0, a0
+    ret
+\end{lstlisting}
+
+No loop, no counter, no back-edge --- just $b$ doublings.
+
+
+\chapter{SLL Synthesis Assembly (Variable Count)} \label{apx:sll-asm}
+
+Real compiler output for \texttt{sll\_var} from \texttt{tests/sc1/tests/isa/sll\_var.c}
+(\texttt{x << n}), reproducible via
+\nolinkurl{rvsc1-unknown-elf-gcc -S -O1 tests/sc1/tests/isa/sll\_var.c}. Five blocks, one per bit of the
+count, each guarded by a test of that bit and containing $2^k$ doublings; the excerpt shows the $k=4$
+and $k=3$ blocks in full and elides the rest, which are identical in structure with 4, 2 and 1
+doublings:
+
+\begin{lstlisting}
+sll_var:
+    li    a5, 16         # test bit 4 of the count
+    and   a5, a1, a5
+    beq   a5, zero, .L2  # not set: skip the 16 doublings
+    add   a0, a0, a0     # x <<= 16
+    add   a0, a0, a0
+    # ... 14 more doublings ...
+.L2:
+    li    a5, 8          # test bit 3
+    and   a5, a1, a5
+    beq   a5, zero, .L3
+    add   a0, a0, a0     # x <<= 8
+    # ... 7 more doublings ...
+.L3:
+    # ... bits 2, 1 and 0: 4, 2 and 1 doublings, same shape ...
+.L6:
+    ret
+\end{lstlisting}
+
+No loop, no counter and no back-edge: every branch is a short forward \texttt{beq}, and the count is
+never masked, because testing only bits 0 through 4 is itself the mod-32 truncation.
+
+
+\chapter{SRL Synthesis Assembly (Constant Count)} \label{apx:srl-const-asm}
+
+Real compiler output for \texttt{shr3} from \nolinkurl{tests/sc1/tests/isa/srl.c} (\texttt{x >> 3}, so
+$s = 3$, giving $32-3 = 29$ unrolled extraction steps). The full listing runs to 181 lines, 151 of
+them instructions, counted from the \texttt{shr3:} label through its \texttt{ret}, and is reproducible
+via \nolinkurl{rvsc1-unknown-elf-gcc -S -O1 tests/sc1/tests/isa/srl.c}; the excerpt below shows the
+setup, the first two extraction steps, and the last, with the identical repeated block elided:
+
+\begin{lstlisting}
+shr3:
+    mv    a2, a0         # a2 = x (saved before a0 is zeroed)
+    li    a0, 0          # result = 0
+    li    a5, 1          # out_mask = 1
+    li    a4, 1
+    add   a4, a4, a4     # in_mask = 1 << 3, unrolled: 3 doublings
+    add   a4, a4, a4
+    add   a4, a4, a4
+    and   a3, a2, a4     # bit 3
+    beq   a3, zero, .L2
+    or    a0, a0, a5
+.L2:
+    add   a5, a5, a5
+    add   a4, a4, a4     # bit 4
+    and   a3, a2, a4
+    beq   a3, zero, .L3
+    or    a0, a0, a5
+.L3:
+    # ... pattern repeats once per surviving bit, 4 through 30,
+    #     with no loop back-edge between blocks ...
+.L29:
+    add   a5, a5, a5
+    add   a4, a4, a4     # bit 31 (last surviving bit)
+    and   a3, a2, a4
+    beq   a3, zero, .L30
+    or    a0, a0, a5
+.L30:
+    ret
 \end{lstlisting}
 
 
-\chapter{SRL Synthesis Assembly} \label{apx:srl-asm}
+\chapter{SRL Synthesis Assembly (Variable Count)} \label{apx:srl-asm}
 
 \begin{lstlisting}
 # rd = rs1 >> rs2 (logical shift right)
@@ -114,7 +187,46 @@ done:
 \end{lstlisting}
 
 
-\chapter{SRA Synthesis Assembly} \label{apx:sra-asm}
+\chapter{SRA Synthesis Assembly (Constant Count)} \label{apx:sra-const-asm}
+
+Real compiler output for \texttt{sra3} from \nolinkurl{tests/sc1/tests/isa/sra.c} (\texttt{x >> 3}, so
+$s = 3$). The full listing runs to 216 lines, 185 of them instructions, counted from the
+\texttt{sra3:} label through its \texttt{ret}, and is reproducible via
+\nolinkurl{rvsc1-unknown-elf-gcc -S -O1 tests/sc1/tests/isa/sra.c}; the excerpt below shows the sign-bit
+setup, the first extraction step (identical in structure to Appendix~\ref{apx:srl-const-asm}), the
+elided repeated block, and the unrolled \texttt{sign\_mask} construction:
+
+\begin{lstlisting}
+sra3:
+    mv    a6, a0
+    li    a2, -2147483648   # a2 = 0x80000000
+    and   a2, a0, a2        # a2 = sign bit of x
+    li    a0, 0             # result = 0
+    li    a5, 1             # out_mask = 1
+    li    a4, 1
+    add   a4, a4, a4        # in_mask = 1 << 3, unrolled
+    add   a4, a4, a4
+    add   a4, a4, a4
+    and   a3, a6, a4
+    beq   a3, zero, .L2
+    or    a0, a0, a5
+.L2:
+    # ... SRL-part pattern repeats once per surviving bit, exactly
+    #     as in the constant-count SRL listing, through .L30 ...
+.L30:
+    beq   a2, zero, .L31    # sign bit clear -> no sign-fill needed
+    li    a1, -1
+    add   a1, a1, a1        # sign_mask = -1 << (32-3), unrolled:
+    add   a1, a1, a1        # 29 doublings from -1, seeded via addi
+    add   a1, a1, a1        # (no lui needed; keeps this synthesis
+    # ... 26 more doublings ...        rvsc0-compatible)
+    or    a0, a0, a1
+.L31:
+    ret
+\end{lstlisting}
+
+
+\chapter{SRA Synthesis Assembly (Variable Count)} \label{apx:sra-asm}
 
 \begin{lstlisting}
 # rd = rs1 >>_s rs2 (arithmetic shift right)

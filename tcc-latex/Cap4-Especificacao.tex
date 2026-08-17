@@ -93,15 +93,19 @@ C programs.
 \section{rvsc2 --- Single-Cycle Without Fence and Control}
 
 The rvsc2 target implements the full RV32I base ISA with three groups of instructions excluded. Memory
-ordering instructions are unnecessary on a single-core single-cycle processor: omitting them is
-behavior-preserving. CSR access and system instructions require operating system support that is absent
-in the bare-metal environment.
+ordering instructions (\texttt{fence}, and \texttt{fence.i} from Zifencei) are unnecessary on a
+single-core single-cycle processor: omitting them is behavior-preserving. CSR access (the Zicsr group)
+and the environment-call instructions \texttt{ecall} and \texttt{ebreak} require privileged or
+operating-system support that is absent from both the datapath and the bare-metal environment.
+Privileged instructions such as \texttt{sret}, \texttt{wfi} and \texttt{sfence.vma} are outside the
+base ISA being subset and are therefore not part of this specification at all; a processor that
+implements no privilege modes cannot omit them, having never offered them.
 
 \begin{table}[htb]
 \centering
 \caption{rvsc2 native instruction set (RV32I base, excluding fence, CSR, and system groups)}
 \label{tab:rvsc2-isa}
-\begin{tabular}{ll}
+\begin{tabular}{lp{11.9cm}}
 \toprule
 \textbf{Group} & \textbf{Instructions} \\
 \midrule
@@ -120,15 +124,31 @@ Upper immediate    & \texttt{lui, auipc} \\
 \centering
 \caption{rvsc2 instruction treatment}
 \label{tab:rvsc2-treatment}
-\begin{tabular}{ll}
+\begin{tabular}{p{2.6cm}p{4.6cm}p{6.4cm}}
 \toprule
-\textbf{Treatment} & \textbf{Instructions} \\
+\textbf{Group} & \textbf{Instructions} & \textbf{Treatment} \\
 \midrule
-Behaviorally equivalent & \texttt{fence, fence.i, sfence.vma} \\
-Rejected & \texttt{ecall, ebreak, sret, wfi}, CSR instructions (\texttt{csrrw, csrrs, csrrc, csrrwi, csrrsi, csrrci}) \\
+Memory ordering & \texttt{fence, fence.i}
+  & Never emitted; omitting them is behavior-preserving \\
+CSR access (Zicsr) & \texttt{csrrw, csrrs, csrrc, csrrwi, csrrsi, csrrci}
+  & Rejected, including from inline assembly \\
+Environment call & \texttt{ecall, ebreak}
+  & Never emitted from portable C, but not rejected \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+The three treatments are not equally strong, and the distinction matters to what the target can be
+said to guarantee. Memory ordering is a compiler obligation: the backend is configured never to emit a
+fence, and portable C that would ordinarily produce one --- \texttt{\_\_sync\_synchronize}, a
+sequentially consistent or acquire/release atomic --- produces none. Zicsr is enforced by the toolchain
+as a whole rather than by the compiler alone: because the target's architecture string is
+\texttt{rv32i}, which does not include Zicsr, the assembler refuses a \texttt{csr} mnemonic even when a
+program writes one by hand in inline assembly. \texttt{ecall} and \texttt{ebreak} receive neither
+guarantee. They belong to the RV32I base, so the assembler accepts them from inline assembly, and
+\texttt{\_\_builtin\_trap} expands to \texttt{ebreak}; the requirement on them is therefore that no
+ordinary C program reaches them, not that the toolchain forbids them.
+Section~\ref{sec:sc2-isa-tests} tests all three.
 
 \section{rvsc3 --- Single-Cycle rv32i}
 
@@ -140,7 +160,7 @@ synthesis is required: every RV32I instruction is natively supported by the hard
 \centering
 \caption{rvsc3 native instruction set (complete RV32I)}
 \label{tab:rvsc3-isa}
-\begin{tabular}{ll}
+\begin{tabular}{lp{11.9cm}}
 \toprule
 \textbf{Group} & \textbf{Instructions} \\
 \midrule
@@ -170,8 +190,8 @@ rvsc3 instructions, it natively supports:
         \texttt{srliw}, \texttt{sraiw}
 \end{itemize}
 
-The W-suffix variants operate on 32 bits and sign-extend the result to 64 bits, following the same
-convention as \texttt{addw}, \texttt{subw}, and the other W instructions from rvsc4.
+The W-suffix variants operate on the low 32 bits of their operands and sign-extend the 32-bit result
+to 64 bits.
 
 \section{rvsc5 --- Single-Cycle rv64im}
 
@@ -191,24 +211,34 @@ The rvsc6 target extends rvsc5 with the complete F (single-precision) and D (dou
 floating-point extensions as defined in \cite{riscv-spec}, supporting all arithmetic, memory,
 conversion, and comparison instructions for both precisions.
 
-\begin{itemize}
-  \item Loads/stores: \texttt{flw, fsw} (single); \texttt{fld, fsd} (double)
-  \item Arithmetic: \texttt{fadd.s, fadd.d, fsub.s, fsub.d, fmul.s, fmul.d, fdiv.s, fdiv.d,
-        fsqrt.s, fsqrt.d}
-  \item Fused multiply-add: \texttt{fmadd.s, fmadd.d, fmsub.s, fmsub.d, fnmadd.s, fnmadd.d,
-        fnmsub.s, fnmsub.d}
-  \item Sign, minimum, maximum: \texttt{fsgnj.s, fsgnj.d, fsgnjn.s, fsgnjn.d, fsgnjx.s, fsgnjx.d,
-        fmin.s, fmin.d, fmax.s, fmax.d}
-  \item Comparison and classification: \texttt{feq.s, feq.d, flt.s, flt.d, fle.s, fle.d,
-        fclass.s, fclass.d}
-  \item Move between integer and FP registers: \texttt{fmv.w.x, fmv.x.w} (single);
-        \texttt{fmv.d.x, fmv.x.d} (double)
-  \item Conversions (rv64): \texttt{fcvt.s.w, fcvt.s.wu, fcvt.s.l, fcvt.s.lu} (int to single);
-        \texttt{fcvt.w.s, fcvt.wu.s, fcvt.l.s, fcvt.lu.s} (single to int);
-        \texttt{fcvt.d.w, fcvt.d.wu, fcvt.d.l, fcvt.d.lu} (int to double);
-        \texttt{fcvt.w.d, fcvt.wu.d, fcvt.l.d, fcvt.lu.d} (double to int);
-        \texttt{fcvt.s.d, fcvt.d.s} (between single and double)
-\end{itemize}
+\begin{table}[htb]
+\centering
+\caption{rvsc6 floating-point instructions added to rvsc5 (F and D extensions; conversions to and
+from 64-bit integers are rv64 only)}
+\label{tab:rvsc6-isa}
+\begin{tabular}{lp{9.6cm}}
+\toprule
+\textbf{Group} & \textbf{Instructions} \\
+\midrule
+Loads and stores & \texttt{flw, fsw} (single); \texttt{fld, fsd} (double) \\
+Arithmetic & \texttt{fadd.s, fadd.d, fsub.s, fsub.d, fmul.s, fmul.d, fdiv.s, fdiv.d, fsqrt.s,
+  fsqrt.d} \\
+Fused multiply-add & \texttt{fmadd.s, fmadd.d, fmsub.s, fmsub.d, fnmadd.s, fnmadd.d, fnmsub.s,
+  fnmsub.d} \\
+Sign injection & \texttt{fsgnj.s, fsgnj.d, fsgnjn.s, fsgnjn.d, fsgnjx.s, fsgnjx.d} \\
+Minimum and maximum & \texttt{fmin.s, fmin.d, fmax.s, fmax.d} \\
+Comparison and classification & \texttt{feq.s, feq.d, flt.s, flt.d, fle.s, fle.d, fclass.s,
+  fclass.d} \\
+Integer $\leftrightarrow$ FP register move & \texttt{fmv.w.x, fmv.x.w} (single, rv32 and rv64);
+  \texttt{fmv.d.x, fmv.x.d} (double, rv64) \\
+Integer $\rightarrow$ single & \texttt{fcvt.s.w, fcvt.s.wu, fcvt.s.l, fcvt.s.lu} \\
+Single $\rightarrow$ integer & \texttt{fcvt.w.s, fcvt.wu.s, fcvt.l.s, fcvt.lu.s} \\
+Integer $\rightarrow$ double & \texttt{fcvt.d.w, fcvt.d.wu, fcvt.d.l, fcvt.d.lu} \\
+Double $\rightarrow$ integer & \texttt{fcvt.w.d, fcvt.wu.d, fcvt.l.d, fcvt.lu.d} \\
+Single $\leftrightarrow$ double & \texttt{fcvt.s.d, fcvt.d.s} \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \section{rvsc7 --- Single-Cycle Atomic}
 
@@ -216,16 +246,25 @@ The rvsc7 target extends rvsc6 with the A extension (atomic memory operations), 
 rv64imafd instruction set \cite{riscv-spec}. The \texttt{.w} variants operate on 32 bits
 (sign-extended to 64); the \texttt{.d} variants operate on 64 bits.
 
-\begin{itemize}
-  \item Load-reserved and store-conditional: \texttt{lr.w, lr.d}; \texttt{sc.w, sc.d}
-  \item AMO (atomic memory operations):
-        \texttt{amoadd.w, amoadd.d} (atomic add);
-        \texttt{amoand.w, amoand.d} (atomic AND);
-        \texttt{amoor.w, amoor.d} (atomic OR);
-        \texttt{amoxor.w, amoxor.d} (atomic XOR);
-        \texttt{amoswap.w, amoswap.d} (atomic swap);
-        \texttt{amomax.w, amomax.d} (atomic signed maximum);
-        \texttt{amomaxu.w, amomaxu.d} (atomic unsigned maximum);
-        \texttt{amomin.w, amomin.d} (atomic signed minimum);
-        \texttt{amominu.w, amominu.d} (atomic unsigned minimum)
-\end{itemize}
+\begin{table}[htb]
+\centering
+\caption{rvsc7 atomic instructions added to rvsc6 (A extension)}
+\label{tab:rvsc7-isa}
+\begin{tabular}{ll}
+\toprule
+\textbf{Instructions} & \textbf{Operation} \\
+\midrule
+\texttt{lr.w, lr.d}           & Load-reserved \\
+\texttt{sc.w, sc.d}           & Store-conditional \\
+\texttt{amoadd.w, amoadd.d}   & Atomic add \\
+\texttt{amoand.w, amoand.d}   & Atomic AND \\
+\texttt{amoor.w, amoor.d}     & Atomic OR \\
+\texttt{amoxor.w, amoxor.d}   & Atomic XOR \\
+\texttt{amoswap.w, amoswap.d} & Atomic swap \\
+\texttt{amomax.w, amomax.d}   & Atomic signed maximum \\
+\texttt{amomaxu.w, amomaxu.d} & Atomic unsigned maximum \\
+\texttt{amomin.w, amomin.d}   & Atomic signed minimum \\
+\texttt{amominu.w, amominu.d} & Atomic unsigned minimum \\
+\bottomrule
+\end{tabular}
+\end{table}

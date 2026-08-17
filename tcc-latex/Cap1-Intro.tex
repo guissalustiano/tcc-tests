@@ -52,7 +52,7 @@ The specific objectives are:
 
 \section{Rationale}
 
-To the best of the authors' knowledge, no prior work addresses C compilation for intentionally
+To the best of the author's knowledge, no prior work addresses C compilation for intentionally
 restricted pedagogical RISC-V subsets. GCC's machine description framework \cite{gcc-internals} makes
 it possible to define a backend that synthesizes missing instructions transparently from the primitives
 the hardware does support. Applying this mechanism to pedagogical ISAs that deliberately omit standard
@@ -74,16 +74,20 @@ relevance beyond the course itself.
 \section{Document Organization}
 
 The remainder of this monograph is organized as follows.
-Chapter~\ref{cap:related-work} surveys related work.
-Chapter~\ref{cap:background} presents the conceptual background, covering the GCC compilation
-framework, the RISC-V instruction set architecture, and the architecture of the Hennessy-Patterson
-educational processor.
-Chapter~\ref{cap:method} describes the development method, including the specification,
-implementation, and testing phases followed for each target.
+Chapter~\ref{cap:related-work} surveys related work, in instruction synthesis for embedded compiler
+backends and in tools for instruction-set-level computing education.
+Chapter~\ref{cap:background} presents the conceptual background: the RISC-V instruction set, the
+single-cycle datapath of the Hennessy-Patterson educational processor, the C calling convention the
+targets must honour, and the structure of a GCC backend.
+Chapter~\ref{cap:method} describes the development method, including the derivation cycle applied to
+each synthesized instruction and the validation approach.
 Chapter~\ref{cap:requirements} specifies the requirements for each of the eight targets, defining
 the allowed instruction sets and the synthesis obligations imposed on the compiler.
-Chapter~\ref{cap:development} details the implementation, describing the instruction synthesis
-techniques developed inside the GCC machine description and the per-target configuration files.
-Chapter~\ref{cap:results} presents the test results and discusses the validity and limitations of
-each target.
+Chapter~\ref{cap:development} details the implementation: a correctness argument and an instruction
+sequence for every synthesis, the machine-description and per-target configuration that make them
+transparent to the programmer, and the limitations that remain.
+Chapter~\ref{cap:results} reports the three test layers, quantifies the static and dynamic cost of
+synthesis on the Embench-IoT suite, and discusses what the measurements do and do not establish.
 Chapter~\ref{cap:conclusion} presents the conclusions, contributions, and directions for future work.
+The appendices collect the compiler output that the synthesis sections refer to, including a worked
+compilation example across rvsc0, rvsc1 and rvsc2.

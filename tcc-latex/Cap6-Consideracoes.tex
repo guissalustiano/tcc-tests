@@ -11,8 +11,13 @@ self-tests}, which execute compiled programs on a reference simulator and check 
 the \textit{GCC torture suite}, which subjects the compiler to a large corpus of programs accumulated
 by the GCC project itself. The synthesis-heavy targets are verified in depth: rvsc1 receives all
 three layers, and rvsc0 receives the first two (the torture suite requires function calls, which
-rvsc0 cannot compile). rvsc2 is covered by ISA compliance alone, and rvsc3 through rvsc7 require no
-testing beyond what the upstream backend already provides.
+rvsc0 cannot compile). The first strategy is applied at two scopes --- to the objects the compiler
+emits and to the fully linked executable --- because, as Section~\ref{sec:sc1-linked-isa} shows, the
+two support different claims and only the narrower one belongs to the compiler. rvsc2, which
+synthesizes nothing, is covered by ISA compliance plus a set of probes that ask directly for each
+excluded instruction group (Section~\ref{sec:sc2-isa-tests}); rvsc3 through rvsc7 require no testing
+beyond what the upstream backend already provides. This section first describes how each strategy
+works, then presents the specificities and results of each target.
 
 \subsection{Test Strategies}
 
@@ -20,14 +25,31 @@ testing beyond what the upstream backend already provides.
 
 The ISA compliance strategy answers a static question: does the compiler ever emit an instruction that
 the modeled processor does not implement? Each target has a corpus of small C programs, each written
-to exercise one operation category. The test script compiles every program in the corpus at each of
+to exercise one operation category, one program shifts by variable amounts, another stores individual
+bytes, another compares signed and unsigned values, and so on. Each program is constructed so that a
+compiler for the full RV32I ISA would naturally use the native instruction under test, forcing the
+restricted target to demonstrate the corresponding synthesis instead.
+
+The test script compiles every program in the corpus at each of
 GCC's five optimization levels (\texttt{-O0}, \texttt{-O1}, \texttt{-O2}, \texttt{-O3},
 \texttt{-Os}), assembles the output, and disassembles the resulting object with pseudo-instruction
 expansion enabled. Every mnemonic in the disassembly is then checked against the target's allowlist.
+Expanding the pseudo-instructions is essential rather than cosmetic: without it a forbidden
+instruction can pass the check disguised as an alias, since the assembler prints
+\texttt{jalr x0, 0(ra)} as \texttt{ret} and a native shift can hide behind a synthetic mnemonic.
+
+The same allowlist is applied a second time at a wider scope, to the fully linked executable. The two
+answer different questions. Over an object, the check bounds what this work's compiler does, which is
+the claim the backend is responsible for; over a linked binary, it bounds what the processor is
+actually asked to execute, which additionally depends on runtime libraries the compiler never sees.
+The linked-scope check therefore partitions its result: code the compiler generated, including
+\texttt{libgcc}, must be clean, while hand-written assembly from the C runtime is reported separately
+with a reason for each symbol rather than being silently ignored. Section~\ref{sec:sc1-linked-isa}
+reports both partitions for rvsc1.
 
 \subsubsection{Behavioral Self-Tests} \label{sec:strategy-behav}
 
-ISA compliance proves that the output is \textit{legal}, it says nothing about whether it is
+ISA compliance proves that the output is \textit{legal}; it says nothing about whether it is
 \textit{correct}. The behavioral strategy closes this gap by executing the compiled programs on Spike,
 the RISC-V reference simulator \cite{spike}, and checking their results. Each behavioral test is a
 self-validating C program covering one operation category through a sequence of assertions in boundary
@@ -40,10 +62,25 @@ nonzero code identifying the first failing assertion otherwise.
 Hand-written tests only cover the code paths their author anticipated. The third strategy probes the
 remaining ones with \texttt{gcc.c-torture/execute}, a suite of 1\,684 C programs accumulated by the
 GCC project over three decades of compiler development, many distilled from real miscompilation bugs.
-The programs are self-validating, with assertion calling \texttt{abort()} on
-failure. The harness compiles each program at all five
-optimization levels and runs it on Spike, giving $1684 \times 5 = 8420$ compiler/optimizer
-combinations. A combination passes when the simulator exits with code 0.
+The programs are self-validating, with assertions calling \texttt{abort()} on failure. The harness
+compiles each program at all five optimization levels and runs it on Spike in the same proxy-kernel
+environment used by the behavioral tests, giving $1684 \times 5 = 8420$ compiler/optimizer
+combinations. Programs that fail to compile are not all equivalent, so the harness classifies the
+failure rather than discarding it: a diagnostic rejecting the program (typically a type or feature the
+freestanding runtime does not provide) counts as skipped, whereas an internal compiler error --- the
+compiler aborting on its own invariants, identified by its crash diagnostic, by death from a signal,
+or by an exit status no ordinary diagnostic produces --- is a backend defect and counts as a failure.
+Distinguishing the two matters because a single missing constraint or clobber can crash the compiler
+on dozens of programs at once; folding those crashes into a skip count is what allowed the
+missing-constraint defect described in Section~\ref{sec:sc1-torture-tests} to go unnoticed. The
+register-clobber defect described in the same section escaped by a different route, surfacing as
+execution timeouts rather than as skips. Failures are therefore grouped by the crash location or
+diagnostic text they report, so that one root cause is presented as one entry rather than as the many
+program/optimization pairs it happens to affect. A fixed simulation budget of 300 seconds bounds each
+execution, and a 120-second budget bounds each compilation. A combination passes when the simulator
+exits with code 0. In addition, for each program that compiles successfully, the emitted assembly is
+passed through the same static mnemonic checker used by the ISA-compliance tests, catching any
+forbidden instruction that the dynamic execution might not exercise.
 
 \subsection{rvsc0}
 
@@ -60,7 +97,7 @@ lw  sw  beq  add  addi  sub  and  or
 \centering
 \caption{ISA compliance test programs for rvsc0, by operation category}
 \label{tab:sc0-isa-files}
-\begin{tabular}{ll}
+\begin{tabular}{p{3.0cm}p{11.5cm}}
 \toprule
 \textbf{Test program} & \textbf{Operations exercised} \\
 \midrule
@@ -70,7 +107,7 @@ Signed byte load & LB --- synthesized via \texttt{lw}+shift+sign-extend \\
 Halfword load & LH signed/unsigned --- synthesized via \texttt{lw}+shift+mask \\
 Logic         & AND, OR (native); XOR via \texttt{(a|b)-(a\&b)}; ANDI/ORI via \texttt{li}+register-op \\
 Large constants & LUI --- synthesized via addi/add (10-bit split + shifts, no lui or memory access) \\
-Bitwise NOT   & NOT --- synthesized as \texttt{sub x0, rs; addi rd, rd, -1} \\
+Bitwise NOT   & NOT --- synthesized as \texttt{sub rd, x0, rs; addi rd, rd, -1} \\
 Byte store    & SB --- synthesized via \texttt{lw}+clear+insert+\texttt{sw} \\
 Shifts        & SLL, SRL, SRA with constant and variable shift counts \\
 Comparisons   & SLT and SLTU --- synthesized via sub/xor/and/lshr chains \\
@@ -106,7 +143,7 @@ split). All test programs therefore use only stack-allocated \texttt{volatile} l
 \centering
 \caption{Behavioral test programs for rvsc0, by operation category}
 \label{tab:sc0-behav-files}
-\begin{tabular}{ll}
+\begin{tabular}{p{2.6cm}p{11.9cm}}
 \toprule
 \textbf{Test program} & \textbf{Cases covered} \\
 \midrule
@@ -141,7 +178,7 @@ lw  sw  beq  add  addi  sub  and  or  lui  jalr
 \centering
 \caption{ISA compliance test programs for rvsc1, by operation category}
 \label{tab:sc1-isa-files}
-\begin{tabular}{ll}
+\begin{tabular}{p{3.6cm}p{10.9cm}}
 \toprule
 \textbf{Test program} & \textbf{Operations exercised} \\
 \midrule
@@ -159,7 +196,7 @@ Immediate OR & ORI --- synthesized as \texttt{li t, imm; or rd, rs, t} \\
 Byte store   & SB --- synthesized via \texttt{lw}+clear+insert+\texttt{sw} \\
 Halfword store & SH --- synthesized via \texttt{lw}+clear+insert+\texttt{sw} \\
 Constant-count shifts & SLL, SRL, SRA with compile-time shift counts \\
-Variable left shift & SLL with runtime shift count --- count-down loop \\
+Variable left shift & SLL with runtime shift count --- binary decomposition \\
 Comparisons  & SLT and SLTU --- synthesized via sub/xor/and/lshr \\
 Variable arithmetic right shift & SRA with runtime shift count --- bit-extraction loop + sign-fill \\
 Variable logical right shift & SRL with runtime shift count --- bit-extraction loop \\
@@ -181,7 +218,7 @@ ordinary C programs with a \texttt{main} function.
 \centering
 \caption{Behavioral test programs for rvsc1, by operation category}
 \label{tab:sc1-behav-files}
-\begin{tabular}{ll}
+\begin{tabular}{lp{9.4cm}}
 \toprule
 \textbf{Test program} & \textbf{Cases covered} \\
 \midrule
@@ -191,12 +228,18 @@ Logic       & XOR, ORI, ANDI, NOT on representative bit patterns; \texttt{(a|b)-
 Memory      & SB/LBU/LB and SH/LHU/LH on aligned addresses; signed/unsigned byte and halfword widening \\
 Shifts      & SLL/SRL/SRA with constant counts (3, 15, 16, 4); variable counts; sign-propagation and zero-fill \\
 Comparisons & SLT and SLTU with \texttt{a=-1}, \texttt{b=1}; \texttt{INT\_MIN < INT\_MAX}; \texttt{UINT\_MAX > 0} \\
+Sub-word aliasing & Adjacent \texttt{unsigned char} and \texttt{unsigned short} objects sharing one word, stored through unbarriered \texttt{noinline} functions: neither read-modify-write may resurrect its neighbour's stale value --- the regression test for the \texttt{qrduino} miscompilation (Section~\ref{sec:sc1-corner-cases}) \\
+Values live across jumps & Twenty-four accumulators carried through a branching loop, enough live values to fill the register file so that several sit in scratch registers across a synthesized jump --- the regression test for the unreserved \texttt{t0} (Section~\ref{sec:sc1-corner-cases}) \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-All 6 behavioral tests pass at every optimization level (\texttt{-O0} through \texttt{-Os}), for
-$6 \times 5 = 30$ cases.
+All 8 behavioral tests pass at every optimization level (\texttt{-O0} through \texttt{-Os}), for
+$8 \times 5 = 40$ cases. The last two are regression tests rather than coverage of an operation: each
+was written after a defect that the rest of this suite had run past, and each was confirmed to fail
+against a build with its own fix reverted --- \texttt{alias.c} at \texttt{-O2} and \texttt{-O3},
+\texttt{livejump.c} at \texttt{-O1} and above --- while every other test still passed. That is the gap
+they exist to close; how the two defects were found is reported in Section~\ref{sec:embench-perf}.
 
 \subsubsection{GCC Torture Suite} \label{sec:sc1-torture-tests}
 
@@ -209,60 +252,277 @@ Table~\ref{tab:torture-results} summarizes the outcome.
 \label{tab:torture-results}
 \begin{tabular}{lrrr}
 \toprule
-\textbf{Optimization} & \textbf{Passed} & \textbf{Skipped} & \textbf{Timed out} \\
+\textbf{Optimization} & \textbf{Passed} & \textbf{Skipped} & \textbf{Failed} \\
 \midrule
-\texttt{-O0} & $\sim$1\,501 & $\sim$183 & 0 \\
-\texttt{-O1} & $\sim$1\,531 & $\sim$153 & 0 \\
-\texttt{-O2} & 1\,505  & 164  & 15 \\
-\texttt{-O3} & $\sim$1\,503 & $\sim$161 & $\sim$14 \\
-\texttt{-Os} & $\sim$1\,525 & $\sim$157 & $\sim$2 \\
-\textbf{Total} & \textbf{7\,546} & \textbf{843} & \textbf{31} \\
+\texttt{-O0} & 1\,669 & 15 & 0 \\
+\texttt{-O1} & 1\,669 & 15 & 0 \\
+\texttt{-O2} & 1\,669 & 15 & 0 \\
+\texttt{-O3} & 1\,669 & 15 & 0 \\
+\texttt{-Os} & 1\,669 & 15 & 0 \\
+\textbf{Total} & \textbf{8\,345} & \textbf{75} & \textbf{0} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-``Skipped'' denotes programs that fail to compile or link. The two dominant causes are unrelated to
-sc1's restricted instruction set: roughly 100 tests use old K\&R-style implicit \texttt{int}
-declarations that GCC 17 (defaulting to C23) rejects as hard errors, and roughly 35 tests use
-\texttt{printf}/\texttt{sprintf}/\texttt{fprintf}, whose newlib implementation references an internal
-reentrant symbol absent from the linked sysroot. A further three use \texttt{\_\_int128}, which
-32-bit RISC-V does not support regardless of instruction set.
+Every combination that runs, passes. Fifteen sources are skipped at every optimization level, and no
+source is skipped by name: thirteen are skipped because they \textit{declare} a prerequisite this
+configuration does not provide, and two because they do not compile.
+Table~\ref{tab:torture-skips} gives both groups. None is related to sc1's restricted instruction set.
 
-The 31 timed-out cases are programs that compile and execute correctly but generate so many
-synthesized instructions that Spike exceeds the 300-second simulation budget.
-Table~\ref{tab:torture-timeouts} lists the programs that consistently time out at \texttt{-O2} or
-\texttt{-O3}.
+The thirteen come from the suite's own directives. A \texttt{gcc.c-torture} source states what it
+needs with \texttt{dg-require-effective-target}, and DejaGnu skips a test whose stated needs the
+target cannot meet; the harness reads those directives and does the same. What it maintains is
+therefore not a list of files but a table of six properties this configuration lacks, each recorded
+with the evidence for it, and the set of skipped files follows from the sources. An effective target
+named by a source and classified by neither half of that table is treated as present --- the test runs
+--- and reported, so an unrecognised prerequisite can cost a visible failure but never a silent skip.
+Across the whole suite there are currently none: the table's two halves account for all nineteen
+effective targets \texttt{gcc.c-torture/execute} uses.
 
 \begin{table}[htb]
 \centering
-\caption{gcc.c-torture programs that consistently time out ($>$300\,s on Spike) due to synthesis overhead}
-\label{tab:torture-timeouts}
-\begin{tabular}{ll}
+\caption{Torture-suite sources excluded at every optimization level, by cause}
+\label{tab:torture-skips}
+\begin{tabular}{lrp{7.2cm}}
 \toprule
-\textbf{Test program} & \textbf{Optimization levels} \\
+\textbf{Category} & \textbf{Sources} & \textbf{Reason for exclusion} \\
 \midrule
-\texttt{920302-1.c}   & \texttt{-O2}, \texttt{-O3} \\
-\texttt{pr50865.c}    & \texttt{-O2}, \texttt{-O3} \\
-\texttt{pr53645-2.c}  & \texttt{-O2}, \texttt{-O3} \\
-\texttt{pr57876.c}    & \texttt{-O3} \\
-\texttt{pr69447.c}    & \texttt{-O2}, \texttt{-O3} \\
-\texttt{pr82524.c}    & \texttt{-O2}, \texttt{-O3} \\
-\texttt{pr91450-1.c}  & \texttt{-O2}, \texttt{-O3} \\
-\texttt{pr91450-2.c}  & \texttt{-O2}, \texttt{-O3} \\
-\texttt{pr93249.c}    & \texttt{-O3} \\
-\texttt{pr93908.c}    & \texttt{-O2}, \texttt{-O3} \\
-\texttt{string-opt-5.c} & \texttt{-O2}, \texttt{-O3} \\
+\texttt{run\_expensive\_tests} & 5 & Opt-in upstream too; compile time alone exceeds the budget \\
+\texttt{c99\_runtime} & 3 & GCC declines the \texttt{double}$\rightarrow$\texttt{float} math narrowing for this target \\
+\texttt{int128} & 2 & No 128-bit integer mode on any 32-bit RISC-V target \\
+\texttt{mmap} & 2 & No \texttt{sys/mman.h} in this freestanding newlib \\
+\texttt{dfp}, \texttt{dfprt} & 1 & Decimal floating point unsupported \\
+\multicolumn{3}{l}{\textit{--- does not compile ---}} \\
+\texttt{\_\_int128} & 1 & \texttt{pr105613.c}; same cause, but declares no requirement \\
+x87 inline asm & 1 & \texttt{990413-2.c}; x86 register constraints, guarded upstream by target rather than by requirement \\
+\midrule
+\textbf{Total} & \textbf{15} & \\
 \bottomrule
 \end{tabular}
 \end{table}
 
+This list is a quarter of what an earlier edition of this table reported, and the reduction is worth
+recording because none of it was earned by a change to the compiler. Forty-two of the fifty-five
+sources then excluded were excluded for a reason that had stopped being true, or that was never true,
+and each was found only by re-testing the stated reason instead of trusting it.
+
+Thirty-five were attributed to a \texttt{printf} link gap: the stdio wrappers call internal reentrant
+symbols (\texttt{\_vfprintf\_r}, \texttt{\_svfprintf\_r}, \texttt{\_vfiprintf\_r}) that the linked
+\texttt{libc.a} did not define. The symbols were missing from an \textit{installed} library that had
+gone stale, not from newlib, and a from-scratch rebuild --- forced by the machine-directory change of
+Section~\ref{sec:sc1-linked-isa}, and otherwise unrelated to it --- defines all four. All thirty-five
+link, and thirty-one passed immediately.
+
+Of the four that did not, three --- \texttt{fprintf-2.c}, \texttt{printf-2.c}, \texttt{user-printf.c}
+--- opened a file for writing and got ``no such file or directory'' back. The obvious reading, that a
+freestanding target has no filesystem, was wrong: the proxy kernel proxies file operations to the host
+perfectly well. \texttt{libgloss} was passing newlib's flag word to a Linux-ABI system call interface
+without converting it, and the two encodings collide --- newlib's \texttt{O\_CREAT} is
+\texttt{0x200}, which the other side reads as \texttt{O\_TRUNC}, and newlib's \texttt{O\_TRUNC} is
+\texttt{0x400}, read as \texttt{O\_APPEND}. So \texttt{fopen(path, "w")} arrived as a request to open
+an already-existing file, and correctly failed. Converting the flags bit by bit in
+\texttt{libgloss/riscv}, alongside the \texttt{errno} conversion that layer already performed, makes
+all three pass. The fourth, \texttt{pr78622.c}, checks that \texttt{snprintf("\%hhd", 4105)} yields
+\texttt{"9"} and a return value of 1, where newlib produced \texttt{"4105"} and 4: it compiles the
+\texttt{hh} length modifier only under \texttt{\_WANT\_IO\_C99\_FORMATS}, which is off by default and
+is now enabled at configure time.
+
+Two more were recorded as needing a libm this target does not build. It does build one, and installs
+it; the harness simply never passed \texttt{-lm}. The last five are the upstream-flagged ``expensive''
+tests, and they stay excluded, but for a reason restated to match what actually happens: measured on
+their own they fit inside the compile budget, and a full sweep compiles many programs at once, so they
+cross it only under that load.
+
+What is left of the runtime-library categories is the \texttt{c99\_runtime} group, and it is the one
+place where reading the directives costs coverage rather than adding it. Two of its three sources,
+\texttt{pr78622.c} and \texttt{pr79327.c}, pass. They are skipped anyway, because the requirement they
+declare genuinely is not met: GCC treats this target as lacking a C99 runtime, which is what
+\texttt{20030125-1.c} --- the third --- fails on. Calling the property present to keep two passing
+tests would mean excluding that third one by name, which is the practice this change exists to end.
+Ten combinations is the price of not maintaining a list of files by hand, and it is worth paying.
+
+The episode is the same lesson as the \texttt{libgcc} and newlib defects, arriving from the other
+direction. There, a check that was never run hid instructions the target cannot execute; here, an
+exclusion whose stated reason had quietly stopped being true hid roughly two hundred combinations that
+pass. An exclusion list is an assertion about the world, and it decays exactly like any other.
+
+An earlier revision of this suite reported 31 cases that appeared to time out at the 300-second Spike
+budget, attributed to shift-synthesis overhead. Root-causing them instead found a genuine backend
+correctness bug: for \texttt{!TARGET\_AUIPC}, both the long-branch/jump synthesis and the
+call-address materialization used the same scratch register (\texttt{t1}) without declaring it
+clobbered, so an optimizer could leave a call executing with a stale register value pointing at a
+nearby loop instead of the intended callee --- and, more subtly, the same missing declaration let IRA
+allocate an \textit{unrelated} live value (e.g.\ a loaded word inside the byte/halfword store
+synthesis) to a register that a nearby shift-synthesis loop's back edge silently destroyed. Both were
+genuine miscompilations, not slow-but-correct code, and were confirmed via direct instruction-level
+tracing (\texttt{spike --log-commits}) on \texttt{920302-1.c} and \texttt{pr93249.c}, where a call or
+a merge step ended up executing with corrupted register/memory state. Fixing the register-clobber
+declarations resolved all 31 original cases with zero regressions.
+
+Two internal compiler errors (ICEs) surfaced among the skipped programs, both in a pattern this work
+itself introduced: \texttt{*branch<mode>\_slt\_synth} --- which catches the ordered-comparison
+branches that combine constructs directly, bypassing the usual expand-time synthesis --- declared its
+comparison operands with a predicate but no constraint string, unlike the sibling upstream
+\texttt{*branch<mode>} pattern it was modeled on. With no constraint to act on, LRA never reloaded a
+non-register value --- such as a memory load combine had folded directly into the comparison --- into
+an actual register before the pattern's post-reload split unconditionally treated both operands as
+registers, crashing as either ``could not split insn'' (\texttt{pr10352-1.c}) or an ICE in
+\texttt{patch\_jump\_insn} during reload's CFG cleanup (\texttt{arith-rand.c}). Adding the missing
+constraints fixed both, again with zero regressions. The defect thus lay in this work's own synthesis
+machinery rather than in upstream GCC, and it surfaced only once the harness stopped folding every
+compile failure into an undifferentiated skip count --- the validation methodology exposing a defect
+in the very code it was built to check.
+
+Neither defect was reported by the harness; both were found by hand, and each escaped by a different
+route --- the clobber defect as the execution timeouts described above, the missing constraints as
+skips. Three shortcomings explained the blind spot, and correcting them is what makes the sweep
+reported below meaningful. First, an ICE was indistinguishable from an unsupported-feature diagnostic,
+so neither affected the exit status; this is what buried the two \texttt{slt\_synth} crashes in the
+skip column. Second, the harness collected the compiler's output through pipes it never drained while
+waiting for the process to exit, so any compilation emitting more than the operating system's pipe
+buffer blocked indefinitely and was recorded as a timeout --- and a compiler dumping the RTL of an
+offending instruction, which is precisely what an ICE does, is the case most likely to exceed that
+buffer. Third, the static checker ignored the per-test option directives that the suite's own sources
+carry, so 115 programs failed on language dialect (most requiring \texttt{-std=gnu89}) rather than on
+anything related to sc1, and were skipped without ever being checked for forbidden instructions.
+
+With the three corrected, the static sweep was repeated over the entire suite, including the sources
+excluded up front, since a program that cannot link can still crash the compiler. Of the 8\,420
+combinations, 8\,368 produced an object file and \textit{every one of them contained only the ten
+instructions sc1 implements} --- no forbidden mnemonic at any optimization level. No ICE occurred
+anywhere in the sweep. The 52 combinations that produced no object divide into 35 front-end rejections
+spanning four distinct causes --- \texttt{\_\_int128} (15), \texttt{sys/mman.h} (10), x87-specific
+inline asm (5), and \texttt{\_Decimal} floating point (5), all of which the earlier discussion already
+attributes to the freestanding runtime or to 32-bit RISC-V in general rather than to sc1 --- and 17
+exhausted compile budgets, confined to the five upstream-flagged ``expensive'' tests. That last count
+is sensitive to machine load, as the affected compilations sit near the 120-second budget; the
+ISA-compliance and ICE counts are not, and are the meaningful results. The count of 35 rejections is
+unchanged from that edition even though Table~\ref{tab:torture-skips} has since lost forty-two
+sources, because the \texttt{printf}-family programs that then dominated the skip column always
+compiled cleanly and passed the static check: their exclusion was only ever a link-stage claim, and it
+is now gone entirely. The routine static sweep no longer needs the \texttt{--include-unsupported} form
+to reach them, either. A program that needs a filesystem, or a C99 math runtime, still compiles, and
+disassembling its object says exactly as much about the compiler as any other; only the compile budget
+is a reason to leave a source out of a check that never runs the program. Scoping the exclusions that
+way rather than sharing the behavioral sweep's raises the routine figure to \textit{8\,360 objects,
+every one ISA-clean, from 8\,395 attempted}.
+
+An earlier edition of Table~\ref{tab:torture-results} carried 36 execution failures --- 34 wrong
+answers or faults plus 2 exhausted simulation budgets --- distributed unevenly across optimization
+levels: none at \texttt{-O0}, 11 at \texttt{-O1} and \texttt{-O2}, 9 at \texttt{-O3}, 5 at
+\texttt{-Os}. That distribution was itself the clue. A synthesis that is wrong in isolation fails at
+every level; one that fails only once an optimizer has acted on it is a synthesis that did not declare
+something about itself, which is the shape of every corner case reported in
+Section~\ref{sec:sc1-corner-cases}.
+
+Thirty-four of the 36 turned out to be a single defect, and it is one already described: the
+unreserved \texttt{t0} of Section~\ref{sec:embench-perf}. Attributing them required reproducing the
+failures rather than inferring the connection from the order in which fixes landed, since three
+backend changes had been made since the measurement. Four compilers were therefore built side by side,
+each installed to its own prefix, differing only in which of those changes were reverted. The build
+with both the register reservation and the sub-word aliasing fix removed reproduces the historical
+failure set exactly, group for group. Reverting only the aliasing fix leaves every implicated program
+passing; reverting only the register reservation brings back all 34 with byte-identical failure
+signatures. The aliasing defect is real and is documented in Section~\ref{sec:embench-perf}, but it
+caused none of these.
+
+The mechanism is visible in the assembly. In \texttt{pr68841.c} at \texttt{-O1}, the compiler without
+the reservation allocates the constant 3 to \texttt{t0}, emits four synthesized jumps that each
+overwrite it with a code address, and then computes with it; with the reservation, \texttt{t0} appears
+only inside the jump triples and is never allocated at all. One mechanism accounts for the whole
+spread of symptoms, which is why they group as they do: a corrupted value used as data yields a wrong
+answer, used as a pointer yields a segmentation fault, used as a jump target yields an illegal
+instruction, and used as a loop bound sends the program down a path long enough to exhaust the
+300-second budget. The two apparent timeouts were therefore miscompilations as well, not
+slow-but-correct code --- the same misreading that \texttt{nsichneu} had already produced on Embench.
+Both now finish well inside the budget.
+
+The remaining 2 are one source, \texttt{20030125-1.c}, at \texttt{-O1} and \texttt{-Os}. It asserts
+that GCC narrows \texttt{floor} on a \texttt{float} argument to \texttt{floorf}, and defines a weak
+\texttt{floor} that aborts if the narrowing did not happen; without a C99 math runtime GCC correctly
+declines to narrow, so the weak function runs and aborts. Upstream guards the test with
+\texttt{dg-require-effective-target c99\_runtime}, a directive this harness does not read. That it is
+unrelated to the restricted instruction set is settled by comparison rather than by argument: a stock
+\texttt{rv32i} toolchain fails the same two levels and passes the same three. The source sits in the
+excluded list under the C99-runtime category of Table~\ref{tab:torture-skips}.
+
+The sweep reported in Table~\ref{tab:torture-results} is the one taken after those fixes, and its
+failure list is committed alongside the harness so that the next sweep diffs against it rather than
+scrolling past. Every one of the 8\,345 combinations that compiles, links and runs, terminates with
+the exit status its assertions require.
+
+\subsubsection{Linked-Program ISA Compliance} \label{sec:sc1-linked-isa}
+
+Every result reported so far concerns what the compiler \textit{emitted}. That is the correct scope
+for a claim about a compiler, but it is a narrower statement than it is easily read as, and the
+difference is not academic. For as long as \texttt{libgcc} supplied its division and multiplication
+routines as hand-written assembly (Section~\ref{sec:embench-perf}), every object the compiler produced
+was ISA-clean and every program that divided nevertheless executed instructions rvsc1 does not
+implement. Neither static checker looked, because both disassemble compiler output; and the simulator
+could not object, because it runs with the wider \texttt{--isa} the proxy kernel requires.
+
+A fourth check therefore applies the allowlist to the whole linked executable, partitioned as
+described in Section~\ref{sec:strategy-isa}. Across the forty linked behavioral binaries --- eight
+programs at five optimization levels --- the program's own code and every library the compiler
+generated, \texttt{libgcc} included, contain only the ten instructions sc1 implements. Everything
+reported in the second partition is hand-written assembly that never passes through the machine
+description, and therefore never sees \texttt{-mno-shift} and its siblings: the C runtime start-up
+code (\texttt{\_start}) and the proxy-kernel system-call stubs (\texttt{\_read}, \texttt{\_write},
+\texttt{\_sbrk}, \texttt{\_close}, \texttt{\_lseek}, \texttt{\_exit}).
+
+That second partition was larger. newlib maps the \texttt{rvsc*} triples to its RISC-V machine
+directory, which supplies \texttt{memset}, \texttt{memcpy}, \texttt{memmove} and \texttt{strcmp} as
+hand-written assembly and thereby shadows the generic C implementations of the same functions --- a
+defect of exactly the same kind as the \texttt{libgcc} one, hidden in exactly the same way, and found
+by exactly the same check. Disabling the machine directory outright does not work, because
+\texttt{setjmp.S} is the one file in it with no generic C equivalent. The fix is instead a machine
+directory of the \texttt{rvsc*} triples' own, containing \texttt{setjmp.S} alone and leaving the
+string routines to newlib's generic C ones, which are synthesized like any other C the compiler sees.
+One obstacle lay inside \texttt{setjmp.S} itself, and only the disassembly exposed it:
+\texttt{longjmp} computes its return value with \texttt{seqz}, an assembler pseudo-instruction that
+expands to \texttt{sltiu}, so the file was not, as reading it suggests, already sc1-legal. Rewritten
+to test the value with \texttt{beq} instead, it stays within the ten-instruction subset, and it is now
+the only hand-written assembly the rvsc targets take from newlib.
+
+What remains in the second partition cannot be removed by any change to this work. A program that
+talks to a host needs some mechanism to do so, and a bare-metal sc1 processor has none --- which is
+precisely why the rvsc0 harness runs with no C library at all, and why the start-up code and syscall
+stubs are absent from anything that would run on the student's own hardware.
+
+The summary is therefore a single statement rather than two: everything this work compiles is
+ISA-clean, and so is everything it links, apart from the start-up and system-call code that exists
+only to reach a host the target processor does not have. It is verified at the linked binary rather
+than inferred from the objects.
+
 \subsection{rvsc2} \label{sec:sc2-isa-tests}
 
-rvsc2 removes only \texttt{fence} (and \texttt{fence.i}) from RV32I, and nothing is synthesized:
-every instruction the compiler may emit is native. The only property left to verify is ISA
-compliance. The rvsc1 test corpus is reused for this check, but against a much wider allowlist: the
-full RV32I base set minus the fence, CSR, and system instruction groups. The 19 programs at five
-optimization levels give 95 test cases; all pass.
+rvsc2 removes three groups from RV32I --- memory ordering, CSR access, and the environment calls
+(Table~\ref{tab:rvsc2-treatment}) --- and synthesizes nothing: every instruction the compiler may emit
+is native. What is left to verify is therefore not equivalence but exclusion, and it is checked in two
+ways, because Table~\ref{tab:rvsc2-treatment} promises two different things.
+
+The first is ISA compliance, that the compiler never \textit{chooses} an excluded instruction while
+compiling ordinary C. The rvsc1 test corpus is reused for this, but against a much wider allowlist:
+the full RV32I base set minus the three groups. The 19 programs at five optimization levels give 95
+test cases; all pass, with no instruction from any excluded group appearing in any disassembly.
+
+The second checks what happens when a program asks for one \textit{directly}, through inline assembly
+or a builtin --- the half of the requirement an allowlist sweep over ordinary C cannot reach. Ten
+probes at five optimization levels give 50 further cases, all passing, and they confirm the three
+treatments are genuinely different. Four ordering probes (\texttt{\_\_sync\_synchronize}, and
+sequentially consistent, acquire and release atomics) emit no fence; each is compiled a second time
+with \texttt{-mfence}, which restores the upstream behavior, and only counts as passing if the fence
+appears then --- otherwise a probe that had quietly stopped generating fences would report success
+while testing nothing. Four CSR probes, written as inline assembly so that the compiler's own choices
+are bypassed entirely, are all refused: the target's \texttt{rv32i} architecture string does not
+include Zicsr, so the assembler rejects the mnemonic. The last two probes record the limitation rather
+than a guarantee. \texttt{\_\_builtin\_trap} expands to \texttt{ebreak} and inline \texttt{ecall}
+assembles, so the test asserts that the mnemonic \textit{is} present, and will fail if that ever
+changes --- which is what keeps Table~\ref{tab:rvsc2-treatment} honest about the one group the
+toolchain does not enforce.
+
+No behavioral testing is required, because on the instructions rvsc2 does emit it is identical to
+rvsc3 (full RV32I), whose correctness is already established by the upstream GCC test suite.
 
 \subsection{rvsc3 and Above}
 
@@ -270,18 +530,29 @@ No testing is performed for rvsc3 through rvsc7. These targets contain no synthe
 enable flags that correspond to instructions already present in the upstream RISC-V backend. Their
 correctness follows from the correctness of the upstream backend and the GCC test suite.
 
-\section{Program Size}
+\section{Program Size} \label{sec:embench-size}
 
 Each synthesized instruction expands into a sequence of native instructions, increasing the static
-size of the compiled binary. Synthesis sequences fall into two categories. \textit{Constant-length}
-expansions always emit the same number of instructions regardless of operand values: NOT expands to 2
-instructions, XOR to 3 (register operands; 4 with an immediate operand), and each immediate variant
-(ANDI, ORI) adds 1 instruction. \textit{Variable-length} expansions depend on runtime values: SLL,
-SRL, and SRA use count-down loops whose length is proportional to the shift amount, with worst-case
-counts of 187, $\sim$170, and $\sim$200 instructions respectively for a shift of 31.
+size of the compiled binary. The expansion ratio --- the number of native instructions emitted divided
+by the number of instructions a full-ISA compiler would emit --- quantifies the cost of each missing
+hardware instruction.
 
-To quantify the size penalty on realistic code, the Embench-IoT benchmark suite \cite{embench} was
-compiled for three toolchains:
+Synthesis sequences fall into three categories. \textit{Constant-length}
+expansions always emit the same number of instructions regardless of operand values: NOT expands to 2
+instructions, XOR to 3 (register operands; 4 with an immediate operand, Section~\ref{sec:sc1-xor}),
+and each immediate variant (ANDI, ORI) adds 1 instruction. \textit{Constant-count shifts} are
+straight-line --- the shift amount is known at compile time, so the expansion is unrolled and contains
+no loop --- but their length still grows with that amount: SLL costs exactly $b$ instructions (at most
+31), while SRL and SRA reach worst cases of 158 and 194 instructions. \textit{Variable-length}
+expansions depend on runtime values, though less sharply than they once did: variable-count SLL is now
+straight-line, its cost bounded at 47 instructions regardless of the amount, while SRL and SRA retain
+one bit-extraction loop each and reach 332 and 391. The three previously used count-down loops
+throughout and reached 187, 477, and 669.
+
+The per-instruction figures above bound the cost of any single synthesized operation, but the size
+penalty of a complete program depends on how often each restricted instruction actually appears. To
+quantify this on realistic code, the Embench-IoT benchmark suite \cite{embench} was compiled for three
+toolchains and the static code size of each benchmark compared:
 
 \begin{itemize}
   \item \textbf{gcc17} --- the same GCC 17 fork used by this work, built for the stock
@@ -292,43 +563,76 @@ compiled for three toolchains:
   \item \textbf{rvsc1} --- the synthesized target.
 \end{itemize}
 
-Code size is measured as the \texttt{.text} section of each benchmark's own object files. All
-benchmarks were compiled at \texttt{-O2}.
+Code size is measured as the \texttt{.text} (executable code) section of each benchmark's own object
+files, rather than of a fully linked executable: the library code pulled in at link time (newlib and
+\texttt{libgcc}) is ABI-identical across all three toolchains and would only dilute the
+synthesized-versus-native ratio, which concerns the compiler's own output. All benchmarks were
+compiled at \texttt{-O2}. Because these targets emit no compressed instructions, every instruction
+occupies exactly four bytes, so the byte ratio reported below equals the instruction-count ratio.
 
 \begin{table}[htb]
 \centering
-\caption{Embench-IoT static code size (\texttt{.text} bytes, \texttt{-O2}) and rvsc1 expansion ratios}
+\caption{Embench-IoT static code size (\texttt{.text} bytes, \texttt{-O2}) and rvsc1 expansion
+         ratios, measured with the backend at revision \texttt{32d629dcf2e} on 2026-08-09}
 \label{tab:embench-size}
 \begin{tabular}{lrrr}
 \toprule
 \textbf{Benchmark} & \textbf{gcc17} & \textbf{rvsc1} & \textbf{rvsc1 / gcc17} \\
 \midrule
-\texttt{aha-mont64}     &  3\,548 &  17\,940 &  5.06$\times$ \\
-\texttt{crc32}          &    380  &     908  &  2.39$\times$ \\
-\texttt{depthconv}      &    608  &   3\,532 &  5.81$\times$ \\
-\texttt{edn}            &  3\,244 &  22\,832 &  7.04$\times$ \\
-\texttt{huffbench}      &  2\,140 &   8\,688 &  4.06$\times$ \\
-\texttt{matmult-int}    &    936  &   1\,476 &  1.58$\times$ \\
-\texttt{md5sum}         &  1\,016 &   2\,408 &  2.37$\times$ \\
-\texttt{nettle-aes}     &  4\,444 &  46\,872 & 10.55$\times$ \\
-\texttt{nettle-sha256}  &  6\,976 &  44\,588 &  6.39$\times$ \\
-\texttt{nsichneu}       & 19\,668 &  65\,364 &  3.32$\times$ \\
-\texttt{picojpeg}       & 15\,360 & 149\,496 &  9.73$\times$ \\
-\texttt{qrduino}        & 12\,852 & 126\,048 &  9.81$\times$ \\
-\texttt{sglib-combined} & 10\,824 &  58\,256 &  5.38$\times$ \\
-\texttt{slre}           &  4\,256 &  27\,720 &  6.51$\times$ \\
-\texttt{statemate}      &  6\,484 & 106\,244 & 16.39$\times$ \\
-\texttt{tarfind}        &    528  &   2\,620 &  4.96$\times$ \\
-\texttt{ud}             &  1\,436 &   2\,020 &  1.41$\times$ \\
-\texttt{wikisort}       &  7\,744 &  20\,032 &  2.59$\times$ \\
-\texttt{xgboost}        &    624  &   5\,620 &  9.01$\times$ \\
+\texttt{aha-mont64}     &  3\,548 &  28\,468 &  8.02 \\
+\texttt{crc32}          &    380  &   1\,752 &  4.61 \\
+\texttt{depthconv}      &    608  &   5\,820 &  9.57 \\
+\texttt{edn}            &  3\,244 &  59\,344 & 18.29 \\
+\texttt{huffbench}      &  2\,140 &  15\,936 &  7.45 \\
+\texttt{matmult-int}    &    936  &   1\,500 &  1.60 \\
+\texttt{md5sum}         &  1\,016 &   3\,140 &  3.09 \\
+\texttt{nettle-aes}     &  4\,444 & 117\,652 & 26.47 \\
+\texttt{nettle-sha256}  &  6\,976 & 138\,472 & 19.85 \\
+\texttt{nsichneu}       & 19\,668 &  48\,548 &  2.47 \\
+\texttt{picojpeg}       & 15\,360 & 201\,204 & 13.10 \\
+\texttt{qrduino}        & 12\,852 & 286\,212 & 22.27 \\
+\texttt{sglib-combined} & 10\,824 &  34\,596 &  3.20 \\
+\texttt{slre}           &  4\,256 &  44\,408 & 10.43 \\
+\texttt{statemate}      &  6\,484 &  25\,160 &  3.88 \\
+\texttt{tarfind}        &    528  &   4\,772 &  9.04 \\
+\texttt{ud}             &  1\,436 &   1\,964 &  1.37 \\
+\texttt{wikisort}       &  7\,744 &  38\,812 &  5.01 \\
+\texttt{xgboost}        &    624  &   9\,456 & 15.15 \\
+\midrule
+\textbf{Geomean}        &         &          & \textbf{6.99} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Across the suite, synthesis inflates code size by a mean of $4.94\times$ relative to the
+Across the suite, synthesis inflates code size by a geometric mean of $6.99\times$ relative to the
 \texttt{gcc17} baseline. The custom \texttt{rvsc2} target produces code identical to \texttt{gcc17}
-for all 19 benchmarks (geomean ratio = 1.000).
+for all 19 benchmarks (geomean ratio = 1.000), which is why it is not given a column of its own in
+Table~\ref{tab:embench-size}. The per-benchmark ratio tracks how much of each workload's own code the
+target cannot express directly: \texttt{ud}, which performs most of its arithmetic inside library
+routines rather than in inline shifts, expands only $1.37\times$, whereas \texttt{nettle-aes}, whose
+round function is a chain of constant-amount rotations and byte extractions that each unroll into
+straight-line code, expands $26.47\times$.
+
+Static code size is the side of the ledger that this work has twice moved deliberately, and the
+aggregate hides both moves. Before shifts by a compile-time-known amount were unrolled, the same suite
+measured a geomean of $4.94\times$: a constant shift then cost one short loop regardless of the
+amount, whereas it costs one instruction per bit position once unrolled
+(Section~\ref{sec:sc1-srl}), and the geomean rose to $7.13\times$. The present edition brings it back
+to $6.99\times$ --- but that near-cancellation is a coincidence of averaging two opposite effects, not
+a sign that nothing changed.
+
+Both effects are confined to exactly the benchmarks whose code they concern, which is what makes the
+attribution safe. Making variable-count left shifts straight-line (Section~\ref{sec:sc1-sll}) converts
+trip count into code size, so the shift-heavy workloads grew again: \texttt{nettle-aes} by $1.7\times$
+relative to its own earlier ratio, \texttt{edn} by $1.5\times$, \texttt{tarfind} and
+\texttt{depthconv} by $1.4\times$, \texttt{qrduino} by $1.3\times$. Resolving a sub-word access whose
+lane is known at compile time (Section~\ref{sec:sc1-subword-const}) moves the other way and moves
+further: a byte load that cost an \texttt{and}/shift/extract chain becomes a handful of instructions,
+so the byte- and halfword-heavy workloads collapsed --- \texttt{statemate} to $0.18\times$ of its
+earlier ratio, \texttt{sglib-combined} to $0.45\times$, \texttt{nsichneu} to $0.74\times$. Two
+benchmarks that do neither, \texttt{crc32} and \texttt{matmult-int}, are unchanged to the digit. The
+dynamic counts of Section~\ref{sec:embench-perf} show the same two changes with the signs no longer
+opposed.
 
 \section{Program Performance}
 
@@ -338,70 +642,186 @@ on Spike and totalling the retired instructions.
 
 \subsection{Whole-Program Instruction Counts} \label{sec:embench-perf}
 
-The dynamic cost of a whole program depends on how often each synthesized instruction executes 
-at run time, simple instructions such not or xori has a small absolute value, other instructions
-has a loop and the cost change depends on params. This brenchmark tries to measure a real program impact  weighted by loop trip counts rather than by static frequency. 
+The dynamic cost of a whole program depends on how often each synthesized instruction executes at run
+time. Simple instructions such as \texttt{not} or \texttt{xori} have a small absolute cost, while
+other instructions expand into a loop whose cost depends on the operand. This benchmark measures the
+real program impact, weighted by loop trip counts rather than by static frequency.
 
-Five benchmarks exceeded a 300-second Spike budget under rvsc1 and are reported as TIMEOUT.
+All nineteen benchmarks execute correctly under rvsc1 and all nineteen are included in the geomean.
+
+Reaching that point required three defects to be found, none of which any test suite had identified as
+a defect. Two were in the backend. \texttt{edn}, \texttt{sglib-combined}, \texttt{wikisort} and
+\texttt{nsichneu} shared one cause: the absolute-address sequences that stand in for
+\texttt{auipc}-relative jumps and calls hardcode \texttt{t0} inside raw assembly text, which the
+register allocator never sees, and \texttt{t0} had not been reserved against allocation the way its
+counterpart \texttt{t1} already was. A value living in \texttt{t0} across an ordinary loop back edge
+was therefore overwritten by the jump's own target address. Three of them trapped on a wild pointer
+built from the overwritten value; \texttt{nsichneu} was never genuinely slow but merely diverted, and
+in the round where the fix was made it retired 14\,682\,354 instructions, within 0.05\% of what it had
+retired before the defect was introduced. (That figure and the two below predate the \texttt{libgcc}
+rebuild described next, which is why they differ slightly from Table~\ref{tab:embench-perf}.) This is
+the defect that, root-caused afterwards, also accounts for 34 of the 36 torture-suite execution
+failures discussed in Section~\ref{sec:sc1-torture-tests} --- the suite had been failing on it for
+some time without anyone knowing what the failures meant, which is a weaker thing than reporting a
+defect.
+
+The fifth, \texttt{qrduino}, produced a wrong QR encoding rather than crashing, and came from a defect
+in the sub-word store synthesis itself. Because rvsc1 has no \texttt{sb}, a byte store becomes a
+read-modify-write of the enclosing word, but the instruction it replaces names only the byte. Alias
+analysis therefore traced two such stores back to two distinct symbols, concluded they could not
+conflict, and hoisted both word loads above both word stores --- true of the byte objects, false of
+the word containing them. Two adjacent \texttt{unsigned char} globals then lost one of the two
+updates: \texttt{initecc} assigns \texttt{VERSION} and \texttt{WD} in consecutive statements, and the
+second store wrote back its stale copy of the first, leaving \texttt{WD} correct and \texttt{VERSION}
+zero. Marking the synthesized word accesses as aliasing anything restores the ordering. The cost was
+plainly visible in the edition that introduced it: \texttt{statemate}, whose inner loops are dominated
+by byte accesses, roughly doubled to $107\times$, because a synthesized sub-word access could no
+longer reuse a word its neighbour had just loaded. Almost all of it has since been recovered without
+weakening the fix --- resolving the byte's lane at compile time removes the loads whose reuse was
+forbidden, and \texttt{statemate} now runs at $5.9\times$.
+
+The third defect was not in the compiler but in the library it links against, and it bears on what the
+ISA-compliance result means. \texttt{libgcc}'s SImode divide and multiply routines come from
+hand-written assembly, which the \texttt{-mno-shift} machinery never sees, so they assembled native
+\texttt{slli} and \texttt{srli} --- instructions rvsc1 does not implement. Every object the compiler
+produced was clean and every program that divided or multiplied executed forbidden instructions
+regardless. It stayed hidden from both directions at once: the static checkers disassemble compiler
+output and never inspect the library, while Spike runs with an \texttt{--isa} wide enough to execute
+those instructions rather than trap on them. Rebuilding the routines in C, so they pass through the
+same synthesis path as user code, closes the gap. It is also why the dynamic figures below are
+markedly higher than earlier editions of this measurement --- a synthesized division costs far more
+than the native-shift assembly it replaces, and the earlier numbers were quietly benefiting from
+instructions the target does not have.
+
+Finding any of this was a consequence of the harness correction rather than of the benchmarks
+themselves, and it repeats the lesson of Section~\ref{sec:sc1-torture-tests} exactly. The earlier
+harness recorded a retired-instruction count even when the run exited nonzero, so an aborted benchmark
+entered the table as an ordinary number: \texttt{edn} was published at 512\,612\,605 retired
+instructions, an unremarkable-looking $7.5\times$ overhead. Once failed exits were recorded as
+failures, the same benchmark reported the 4\,899\,454 instructions it managed before trapping --- a
+nominal $0.1\times$, synthesis apparently outrunning the native baseline by a factor of fourteen. That
+impossibility is what exposed the first defect, and pursuing the one benchmark that still failed
+afterwards exposed the second.
 
 \begin{table}[htb]
 \centering
-\caption{Embench-IoT dynamic retired-instruction counts on Spike and rvsc1 run-time overhead.
-         Geomean is over the thirteen benchmarks that completed on both toolchains.}
+\caption{Embench-IoT dynamic retired-instruction counts on Spike and rvsc1 run-time overhead,
+         measured with the backend at revision \texttt{32d629dcf2e} on 2026-08-09. Geomean is over
+         all nineteen benchmarks.}
 \label{tab:embench-perf}
 \begin{tabular}{lrrr}
 \toprule
 \textbf{Benchmark} & \textbf{rvsc2 (native)} & \textbf{rvsc1 (synth)} & \textbf{Overhead} \\
 \midrule
-\texttt{aha-mont64}     & 12\,997\,428 & \textit{timeout}    & --- \\
-\texttt{crc32}          &  5\,991\,188 & 130\,556\,929  & 21.8$\times$ \\
-\texttt{depthconv}      & 54\,552\,784 & 1\,306\,486\,627 & 23.9$\times$ \\
-\texttt{edn}            & 68\,624\,580 & 512\,612\,605  &  7.5$\times$ \\
-\texttt{huffbench}      &  2\,399\,142 & \textit{timeout}    & --- \\
-\texttt{matmult-int}    & 24\,445\,873 &  25\,543\,407  &  1.0$\times$ \\
-\texttt{md5sum}         &  2\,917\,425 &  38\,694\,462  & 13.3$\times$ \\
-\texttt{nettle-aes}     &  4\,674\,471 & 171\,446\,978  & 36.7$\times$ \\
-\texttt{nettle-sha256}  &  4\,917\,841 & \textit{timeout}    & --- \\
-\texttt{nsichneu}       &  2\,514\,597 &  14\,689\,559  &  5.8$\times$ \\
-\texttt{picojpeg}       &  3\,602\,866 & \textit{timeout}    & --- \\
-\texttt{qrduino}        &  5\,140\,049 & \textit{timeout}    & --- \\
-\texttt{sglib-combined} &  3\,005\,822 &  68\,953\,363  & 22.9$\times$ \\
-\texttt{slre}           &  2\,983\,415 &  88\,220\,929  & 29.6$\times$ \\
-\texttt{statemate}      &  2\,065\,897 & 150\,934\,719  & 73.1$\times$ \\
-\texttt{tarfind}        &  5\,287\,906 &  37\,627\,640  &  7.1$\times$ \\
-\texttt{ud}             &  6\,622\,675 &   8\,378\,022  &  1.3$\times$ \\
-\texttt{wikisort}       & \textit{linkfail} & 17\,710\,935 & --- \\
-\texttt{xgboost}        &  3\,804\,604 & 433\,520\,452  & 113.9$\times$ \\
+\texttt{aha-mont64}     & 12\,997\,205 & 196\,589\,228 & 15.1$\times$ \\
+\texttt{crc32}          &  5\,990\,967 & 148\,475\,647 & 24.8$\times$ \\
+\texttt{depthconv}      & 54\,553\,324 & 626\,333\,290 & 11.5$\times$ \\
+\texttt{edn}            & 68\,624\,337 & 476\,311\,679 &  6.9$\times$ \\
+\texttt{huffbench}      &  2\,400\,604 &  55\,943\,506 & 23.3$\times$ \\
+\texttt{matmult-int}    & 24\,450\,824 &  86\,782\,118 &  3.5$\times$ \\
+\texttt{md5sum}         &  2\,921\,598 &  20\,725\,807 &  7.1$\times$ \\
+\texttt{nettle-aes}     &  4\,674\,221 & 124\,353\,986 & 26.6$\times$ \\
+\texttt{nettle-sha256}  &  4\,918\,768 & 105\,542\,084 & 21.5$\times$ \\
+\texttt{nsichneu}       &  2\,514\,354 &   9\,495\,410 &  3.8$\times$ \\
+\texttt{picojpeg}       &  3\,602\,944 & 108\,406\,463 & 30.1$\times$ \\
+\texttt{qrduino}        &  5\,139\,932 & 158\,982\,896 & 30.9$\times$ \\
+\texttt{sglib-combined} &  3\,006\,088 &  78\,272\,009 & 26.0$\times$ \\
+\texttt{slre}           &  2\,985\,856 &  43\,443\,908 & 14.5$\times$ \\
+\texttt{statemate}      &  2\,128\,944 &  12\,623\,156 &  5.9$\times$ \\
+\texttt{tarfind}        &  5\,310\,423 & 265\,936\,624 & 50.1$\times$ \\
+\texttt{ud}             &  6\,622\,470 & 259\,195\,330 & 39.1$\times$ \\
+\texttt{wikisort}       &  1\,625\,997 &  10\,210\,706 &  6.3$\times$ \\
+\texttt{xgboost}        &  3\,804\,383 & 225\,267\,426 & 59.2$\times$ \\
+\midrule
+\textbf{Geomean}        &              &               & \textbf{15.8$\times$} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Across the thirteen benchmarks that completed on both toolchains, synthesis inflates the dynamic
-instruction count by a mean of $13.7\times$, roughly triple the $4.94\times$ static-size
-penalty, because the most expensive syntheses sit inside the hottest loops.
+Across all nineteen benchmarks, synthesis inflates the dynamic instruction count by a geometric mean
+of $15.8\times$, more than twice the $6.99\times$ static-size penalty, because the most expensive
+syntheses sit inside the hottest loops. The spread is wide and, as with code size, tracks each
+workload's reliance on synthesized instructions: the cheapest cases are \texttt{matmult-int} at
+$3.5\times$, \texttt{nsichneu} at $3.8\times$ and \texttt{statemate} at $5.9\times$, whereas the
+shift- and rotate-heavy \texttt{xgboost} and the byte-scanning \texttt{tarfind} reach $59.2\times$ and
+$50.1\times$. \texttt{matmult-int} and \texttt{ud} are no longer the near-parity cases they were in
+earlier editions of this measurement --- at $3.5\times$ and $39.1\times$ they now carry the cost of
+synthesized multiply and divide in \texttt{libgcc}, which earlier measurements had avoided by linking
+assembly the target cannot execute. This confirms the pedagogical point quantitatively: the run-time
+cost of an absent instruction is not a fixed tax but is paid in proportion to how often the program
+actually needs it.
+
+The \texttt{rvsc2} column is also a check on the harness rather than only a baseline: \texttt{rvsc2}
+and \texttt{gcc17} are the same compiler differing in target configuration, so their counts should
+coincide, and over the suite they do to a geometric mean of 1.002. The one benchmark that visibly
+deviates, \texttt{statemate} at 1.03, does so for a reason outside the compiler --- the
+\texttt{rvsc*} triples take newlib's generic C string routines where the stock target takes its
+hand-written assembly ones (Section~\ref{sec:sc1-linked-isa}), and \texttt{statemate} moves enough
+bytes for the difference to show. The static comparison is unaffected, and stays exactly 1.000,
+because it measures the benchmark's own objects and no library code at all.
+
+This aggregate should not be compared directly with the $13.7\times$ published before the
+constant-count unroll, because neither the compiler nor the set of benchmarks being averaged is the
+same. Several effects are superimposed. The unroll lowered the dynamic cost of compile-time-constant
+shifts, which is what allowed several of the most expensive benchmarks to finish inside the Spike
+budget at all; admitting those expensive workloads to the average pushes it up, independently of any
+benchmark becoming slower. The register fix removed work that had been pure waste: in that round
+\texttt{aha-mont64} fell from 413\,815\,964 retired instructions to 197\,361\,701 and
+\texttt{depthconv} from 1\,212\,764\,378 to 593\,772\,817, each roughly halving, because a corrupted
+\texttt{t0} had been sending them down far longer paths while still, by luck, producing the right
+answer. The aliasing fix moved the figure the other way, since a synthesized sub-word access could no
+longer reuse a word its neighbour had already loaded: \texttt{statemate} nearly doubled, from
+$59\times$ to $107\times$. And this edition moved it back down, from $22.2\times$ to $15.8\times$, by
+removing the run-time lane computation wherever the compiler can see the lane
+(Section~\ref{sec:sc1-subword-const}) and by making variable-count left shifts straight-line
+(Section~\ref{sec:sc1-sll}). Every benchmark improved or held: the largest single change is
+\texttt{statemate}, from $107.2\times$ to $5.9\times$, which is the aliasing cost being paid back ---
+what the fix forbade was reusing a loaded word, and a lane resolved at compile time barely loads one.
+The stable comparison is the per-benchmark ratio in the table, not the aggregate across editions of
+it.
 
 \section{Discussion}
 
 The results establish correctness first and cost second. On the correctness axis, the ISA compliance
-tests confirm that the compiler never emits a forbidden mnemonic. Behavioral equivalence is established independently by differential execution on Spike: every
-rvsc1 program produces the same exit code as the reference RV32I binary compiled from the same
-source, and every rvsc0 single-function program writes the same \texttt{tohost} value as its
-reference.
+tests confirm that the compiler never emits a forbidden mnemonic. Behavioral equivalence is
+established independently by execution on Spike: every rvsc1 program verifies its own results against
+independently computed values and exits 0, and every rvsc0 single-function program writes the
+corresponding success token to \texttt{tohost}. Synthesis therefore changes how a computation is
+expressed, not what it computes. That now holds across every program the three test suites actually
+execute --- 95 ISA-compliance cases, 40 behavioral cases, and 8\,345 of the 8\,420 torture
+combinations, the remaining 75 being programs that declare a prerequisite this freestanding target
+does not provide, or that do not compile, for reasons unrelated to the instruction set
+(Table~\ref{tab:torture-skips}) --- and across all nineteen Embench benchmarks. It did not hold before
+this measurement. The torture suite was failing 36 combinations, and two further defects lay outside
+what any suite reached at all. The 36 were attributed only afterwards, by rebuilding the compiler with
+each candidate fix reverted in turn until the failure set reappeared; the other two were found by
+running a fourth, independent corpus and by refusing to accept a failed run as a number. The suites
+bound where correctness has been demonstrated, and widening the corpus widened the bound.
 
 The cost of that re-expression is quantified along two dimensions. Statically, synthesis inflates
-code size by a mean of $4.94\times$ over the Embench suite
-(Table~\ref{tab:embench-size}), dynamically, it inflates the retired-instruction count by a
-mean of $13.7\times$ over the benchmarks that complete (Table~\ref{tab:embench-perf}). The dynamic
-penalty is the larger of the two because the costliest syntheses of the shift loops, each of which
-re-materializes its own back-edge every iteration (Section~\ref{sec:sc1-sll}), tend to sit inside
-the hottest loops, so their cost is multiplied by trip count rather than merely by static occurrence.
+code size by a geometric mean of $6.99\times$ over the Embench suite
+(Table~\ref{tab:embench-size}); dynamically, it inflates the retired-instruction count by a geometric
+mean of $15.8\times$ (Table~\ref{tab:embench-perf}). The dynamic penalty is the larger of the two
+because the costliest syntheses --- the variable-count shifts and the unknown-lane sub-word accesses
+built on them (Section~\ref{sec:sc1-srl}) --- tend to sit inside the hottest loops, so their cost is
+multiplied by trip count rather than merely by static occurrence. Both penalties vary by more than an
+order of magnitude across workloads: statically from $1.37\times$ (\texttt{ud}) to $26.47\times$
+(\texttt{nettle-aes}), and dynamically from $3.5\times$ (\texttt{matmult-int}) to $59.2\times$
+(\texttt{xgboost}). Figure~\ref{fig:embench-overhead} plots the two side by side on a logarithmic
+axis, where that spread --- and the fact that the two orderings differ --- is the shape of the whole
+result.
+
+\input{fig-embench-overhead}
 
 For the pedagogical setting these targets are built for, this variation is the point rather than a
 limitation. The programs students write in an introductory single-cycle course, small loops, modest
-shift amounts, few byte-granular memory accesses, fall at the inexpensive end of both distributions.
-At the same time, the wide spread makes the cost of each ISA restriction concrete and measurable: a
-student can compile the same source for rvsc1 and rvsc3, compare the \texttt{-S} output, and see
-exactly how many native instructions a single missing \texttt{sll} or \texttt{sb} expands into.
+shift amounts, few byte-granular memory accesses, fall at the inexpensive end of both distributions,
+so the toolchain remains practical to use. At the same time, the wide spread makes the cost of each
+ISA restriction concrete and measurable: a student can compile the same source for rvsc1 and rvsc2,
+compare the \texttt{-S} output, and see exactly how many native instructions a single missing
+\texttt{sll} or \texttt{sb} expands into. The compiler thus turns an abstract statement about
+instruction-set design --- ``omitting an instruction shifts its cost into software'' --- into a number
+the student can read off the assembly.
 
 
 % ---------------------------------------------------------------
@@ -422,7 +842,8 @@ to the programmer.
 \section{Contributions}
 
 The primary contribution is the set of synthesis techniques embedded in the GCC machine description.
-For the two most restricted targets, rvsc0 and rvsc1, eighteen distinct operations require synthesis,
+For the two most restricted targets, rvsc0 and rvsc1, the operations requiring synthesis are those
+enumerated in Table~\ref{tab:synthesis-cost},
 ranging from one-instruction replacements (NOT, immediate variants) to variable-length loops (SLL,
 SRL, SRA), multi-instruction identities (XOR, SLT, SLTU), read-modify-write sequences (LB, LBU, LH,
 LHU, SB, SH), and call-site code generation (JAL, JMP). The rvsc0 target additionally requires
@@ -432,27 +853,47 @@ the eight available instructions. Each synthesis was derived algebraically and e
 normal compilation with no programmer intervention.
 
 A secondary contribution is the validation methodology. Two independent test layers were developed
-and applied: an ISA compliance suite that disassembles every generated object with
-\texttt{objdump -M no-aliases} and verifies that no forbidden mnemonic appears, and a behavioral
-equivalence suite that executes rvsc1 and rvsc0 binaries on Spike and compares their outputs against
-a reference RV32I build. Together these layers confirm that synthesis is both correct by construction
-(no forbidden instruction is ever emitted) and correct by execution (the computed results are
-indistinguishable from those of a full-ISA compiler).
+and applied: an ISA compliance suite that disassembles with \texttt{objdump -M no-aliases} and
+verifies that no forbidden mnemonic appears --- applied both to every generated object, which bounds
+the compiler, and to the linked executable, which bounds what the processor is asked to execute ---
+and a behavioral equivalence suite of self-validating programs that execute rvsc1 and rvsc0 binaries
+on Spike and check each computed result against the value the C semantics require, reporting any
+mismatch through the exit code (rvsc1) or the \texttt{tohost} token (rvsc0). Together these layers
+confirm that synthesis is both correct by construction (no forbidden instruction is ever emitted) and
+correct by execution (the computed results match the values the C semantics require).
 
 \section{Results Summary}
 
-Correctness was established for all synthesis cases in rvsc0 and rvsc1. All ISA compliance tests
-pass, and the differential behavioral tests confirm semantic equivalence across all tested programs.
-The rvsc2 target compiles the full Embench-IoT suite with code identical to the upstream GCC 17
-baseline (geomean ratio = 1.000), confirming that the custom target configuration introduces no
-overhead relative to a stock build.
+Correctness was established for all synthesis cases exercised by the test suites in rvsc0 and rvsc1.
+All ISA compliance tests pass; the behavioral tests confirm semantic equivalence on every program
+executed, including all 8\,345 torture-suite combinations that this freestanding target can compile,
+link and meaningfully run (the 75 it cannot are skipped because they declare a prerequisite it does
+not provide, or do not compile, for reasons unrelated to the instruction set). Reaching that point
+required three defects to be fixed --- an unreserved scratch register, an aliasing gap in the sub-word
+store synthesis, and hand-written \texttt{libgcc} assembly that bypassed the instruction restrictions
+entirely. The first accounted for all but two of the torture suite's 36 execution failures; none of
+the three was identified by the suites that were failing on them, and the last two were found only by
+the Embench measurement described above. With all three fixed, all nineteen benchmarks execute
+correctly. A fourth defect, of the same kind as the third, was found by widening the ISA check from
+objects to linked binaries: newlib supplied \texttt{memset}, \texttt{memcpy}, \texttt{memmove} and
+\texttt{strcmp} as hand-written assembly, and giving the \texttt{rvsc*} triples a newlib machine
+directory of their own removed it (Section~\ref{sec:sc1-linked-isa}). What is left outside the subset
+in a linked rvsc1 program is the start-up and system-call code that exists only to reach a host the
+target processor does not have. The rvsc2 target compiles the full Embench-IoT suite with code
+identical to the upstream GCC 17 baseline (geomean ratio = 1.000), confirming that the custom target
+configuration introduces no overhead relative to a stock build.
 
 The cost of synthesis was quantified on two axes. Statically, the synthesized rvsc1 target inflates
-code size by a mean of $4.94\times$ over the nineteen Embench benchmarks, with a range
-from $1.41\times$ (\texttt{ud}, few shifts) to $16.39\times$ (\texttt{statemate},
-comparison-heavy control flow). Dynamically, it inflates retired instruction counts by a
-mean of $13.7\times$ over the thirteen benchmarks that completed within the time budget, with five
-benchmarks timing out entirely.
+code size by a geometric mean of $6.99\times$ over the nineteen Embench benchmarks, with a range from
+$1.37\times$ (\texttt{ud}, few inline shifts) to $26.47\times$ (\texttt{nettle-aes}, rotation- and
+byte-extraction-heavy). Dynamically, it inflates retired instruction counts by a geometric mean of
+$15.8\times$ over all nineteen benchmarks, every one of which executes correctly.
+
+For the pedagogical use case, these figures are not a disqualifying limitation. The programs students
+write in an introductory course fall at the inexpensive end of both distributions. More importantly,
+the wide spread between workloads makes the cost of each absent instruction concrete and measurable:
+compiling the same source for rvsc1 and rvsc2 and diffing the assembly output shows exactly how many
+native instructions a missing \texttt{sll} or \texttt{sb} expands into.
 
 \section{Limitations}
 
@@ -468,19 +909,29 @@ targets, but it means the behavioral test harness that uses HTIF (which requires
 the call to \texttt{main}) cannot be used for rvsc0; rvsc0 programs write their result directly to
 \texttt{tohost} via \texttt{sw}.
 
-The synthesized shift loops are functionally correct but dynamically expensive to the point of
-impracticality for programs that shift inside hot loops. The synthesis is inherently sequential: the
-GCC machine description expands a shift at compile time into a counted loop, which at run time
-executes one iteration per bit position. There is no partial-hardware or table-driven alternative
-within the instruction set these targets support.
+The synthesized shifts are functionally correct but dynamically expensive to the point of
+impracticality for programs that shift inside hot loops. The synthesis is inherently sequential, and
+remains so whether or not the shift amount is known at compile time. When it is not, the GCC machine
+description expands the shift into a counted loop, which at run time executes one iteration per bit
+position. When it is, the loop control disappears --- the expansion is unrolled into straight-line
+code --- but the instruction count stays linear in the word width, since each bit position still needs
+its own test-and-merge step: a constant \texttt{x >> 1} costs 158 instructions. There is no
+partial-hardware or table-driven alternative within the instruction set these targets support.
 
 \section{Future Work}
 
-The most direct extension would be performance optimizations within the existing synthesis.
-Constant-amount shifts are currently synthesized as loops, even though the shift amount is known at
-compile time and could instead be unrolled statically, reducing the per-shift cost from $6b + 1$ to
-$2b$ instructions without any new hardware. This would require a separate \texttt{define\_expand}
-branch for \texttt{CONST\_INT\_P} shift counts.
+The most direct extension would be further performance optimization within the existing synthesis.
+Constant-count SRL and SRA are already unrolled to straight-line code, but remain linear in the word
+width: 158 and 194 instructions in the worst case, because each bit position is extracted and merged
+individually. A bitmask-and-recombine formulation, moving several bits per step instead of one, could
+reduce this substantially without any new hardware. The variable-count forms have more headroom still,
+at 332 and 391 instructions, but the two cheap wins there have already been taken: the left shift that
+both of them use internally is now a straight-line binary decomposition rather than a count-down loop
+(Section~\ref{sec:sc1-sll}), and the one loop each retains pays a single-instruction back-edge rather
+than a re-materialized absolute jump (Section~\ref{sec:sc1-backedge}). What is left is the
+bit-extraction loop itself, which moves exactly one bit per iteration; the same bitmask-and-recombine
+idea that would help the constant-count forms is what would help here, and it is the one remaining
+change of that size.
 
 On the hardware side, each synthesis in this work corresponds exactly to the cost of the missing
 instruction in hardware. A student who extends the Chapter 4.4 processor with, for example, a barrel

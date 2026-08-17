@@ -108,7 +108,7 @@ project/
         +-- build-binutils/   <- binutils out-of-tree build
         +-- build/            <- GCC out-of-tree build
         +-- build-newlib/     <- newlib out-of-tree build
-        +-- install/          <- installed toolchain (bin/, lib/, ...)
+        +-- install/          <- installed toolchain (bin/, lib/)
 \end{lstlisting}
 
 \subsection{Building Binutils} \label{sec:building-binutils}
@@ -187,8 +187,10 @@ With newlib installed, libgcc can be built against it:
 \begin{lstlisting}[language=bash]
 cd targets/rvsc2/build
 
-PATH="$(pwd)/../install/bin:$PATH" make all-target-libgcc -j$(nproc)
-PATH="$(pwd)/../install/bin:$PATH" make install-target-libgcc
+PATH="$(pwd)/../install/bin:$PATH" \
+    make all-target-libgcc -j$(nproc)
+PATH="$(pwd)/../install/bin:$PATH" \
+    make install-target-libgcc
 \end{lstlisting}
 
 After all four steps the toolchain is fully self-contained under \nolinkurl{targets/rvsc2/install/bin/}.
@@ -196,7 +198,8 @@ Compiling a C program to a RISC-V object file requires only:
 
 \begin{lstlisting}[language=bash]
 PATH="targets/rvsc2/install/bin:$PATH" \
-rvsc2-unknown-elf-gcc -O2 -ffreestanding -c program.c -o program.o
+rvsc2-unknown-elf-gcc -O2 -ffreestanding \
+    -c program.c -o program.o
 \end{lstlisting}
 
 \section{Synthesis Derivations} \label{sec:sc1-synthesis}
@@ -432,7 +435,8 @@ uint32_t sra(uint32_t x, uint32_t shift) {
     shift = shift & 31u;
     uint32_t result = srl(x, shift);
     if (shift == 0 || (x >> 31) == 0) return result;
-    // OR in the top 'shift' bits: left-shifting -1 leaves exactly those bits set
+    // OR in the top 'shift' bits: left-shifting -1
+    // leaves exactly those bits set
     uint32_t sign_mask = (uint32_t)(-1) << (32u - shift);
     return result | sign_mask;
 }
@@ -489,7 +493,7 @@ Verification by case analysis on the sign bits of $a = \mathit{rs1}$ and $b = \m
 \begin{lstlisting}[language=C]
 uint32_t slt(uint32_t a, uint32_t b) {
     uint32_t diff      = a - b;
-    uint32_t overflow  = (a ^ b) & (a ^ diff);   // MSB = 1 iff signed overflow
+    uint32_t overflow  = (a ^ b) & (a ^ diff);  // MSB=1 on ovf
     uint32_t corrected = diff ^ overflow;
     return corrected >> 31;
 }
@@ -619,11 +623,13 @@ between them, so the combination can use \texttt{add}/\texttt{addi} instead of \
 matching the rest of this target's arithmetic-only style and needing only one register throughout:
 
 \begin{lstlisting}
-addi  rd, x0, hi     # rd = upper 10 bits of hi20  (fits in addi: 0-1023)
+# hi and lo are the two 10-bit halves of hi20, each 0-1023,
+# so each fits in an addi immediate.
+addi  rd, x0, hi     # rd = hi
 [sll  rd, rd, 10]    # rd = hi << 10
-addi  rd, rd, lo     # rd = (hi << 10) + lo = hi20  (lo fits in addi: 0-1023)
+addi  rd, rd, lo     # rd = (hi << 10) + lo = hi20
 [sll  rd, rd, 12]    # rd = hi20 << 12
-addi  rd, rd, lo12   # rd = v   (only emitted if lo12 != 0)
+addi  rd, rd, lo12   # rd = v  (only if lo12 != 0)
 \end{lstlisting}
 
 Every step reuses \texttt{rd} as both source and destination, so this synthesis needs zero extra
@@ -661,15 +667,15 @@ pointer itself, so it is correct for a pointer whose value the compiler never se
 
 \begin{lstlisting}[language=C]
 /* Common algorithm for lb/lbu/lh/lhu */
-uint32_t aligned  = addr & ~3u;           // word-aligned: addr & -4
-uint32_t word     = lw(aligned);          // lw 0(aligned)
-uint32_t unit_off = addr & MASK;          // MASK = 3 for byte, 2 for halfword
-uint32_t bit_off  = unit_off * 8;         // least-significant bit position
-uint32_t shifted  = word >> bit_off;      // [srl] extracts unit to bits [N:0]
+uint32_t aligned  = addr & ~3u;      // word-aligned: addr & -4
+uint32_t word     = lw(aligned);     // lw 0(aligned)
+uint32_t unit_off = addr & MASK;     // 3 for byte, 2 for half
+uint32_t bit_off  = unit_off * 8;    // lowest bit position
+uint32_t shifted  = word >> bit_off; // [srl] unit to bits [N:0]
 // lbu/lhu: zero-extend via symmetric shift
-uint32_t result   = (shifted << BITS) >> BITS;  // logical: [srl]
+uint32_t result   = (shifted << BITS) >> BITS;           // [srl]
 // lb/lh:  sign-extend via arithmetic shift
-int32_t  result   = (int32_t)(shifted << BITS) >> BITS;  // arithmetic: [sra]
+int32_t  result   = (int32_t)(shifted << BITS) >> BITS;  // [sra]
 // BITS = 24 for byte (QImode), 16 for halfword (HImode)
 \end{lstlisting}
 
@@ -738,14 +744,14 @@ $(\mathtt{val} \mathbin{\&} \mathtt{mask})_i = 0$ and $(\mathtt{word} \mathbin{\
 
 \begin{lstlisting}[language=C]
 void sb(uint8_t *addr, uint32_t rs2) {
-    uint32_t aligned_addr = (uint32_t)addr & ~3u;   // addr & -4
-    uint32_t byte_pos     = (uint32_t)addr & 3u;    // runtime: 0-3
-    uint32_t shift        = byte_pos * 8u;           // runtime: 0,8,16,24
-    uint32_t old_word     = *(uint32_t *)aligned_addr;     // lw
-    uint32_t byte_mask    = 0xFFu << shift;                // [sll] runtime shift
-    uint32_t new_byte     = (rs2 & 0xFFu) << shift;        // [sll] runtime shift
+    uint32_t aligned_addr = (uint32_t)addr & ~3u;  // addr & -4
+    uint32_t byte_pos     = (uint32_t)addr & 3u;  // runtime: 0-3
+    uint32_t shift        = byte_pos * 8u;        // 0, 8, 16, 24
+    uint32_t old_word     = *(uint32_t *)aligned_addr;   // lw
+    uint32_t byte_mask    = 0xFFu << shift;             // [sll]
+    uint32_t new_byte     = (rs2 & 0xFFu) << shift;     // [sll]
     uint32_t new_word     = (old_word & ~byte_mask) | new_byte;
-    *(uint32_t *)aligned_addr = new_word;                   // sw
+    *(uint32_t *)aligned_addr = new_word;                // sw
 }
 \end{lstlisting}
 
@@ -784,7 +790,7 @@ lui   ra,  %hi(back)       # ra[31:12] = upper bits of (PC+4)
 addi  ra,  ra, %lo(back)   # ra = PC+4
 lui   t0,  %hi(target)
 addi  t0,  t0, %lo(target)
-jalr  x0,  0(t0)           # PC <- target; ra already holds return address
+jalr  x0,  0(t0)           # PC <- target; ra already set
 back:
 \end{lstlisting}
 
@@ -799,7 +805,7 @@ materialize the address at all, so it is forced into the cheaper construction: a
 whose condition is trivially true.
 
 \begin{lstlisting}
-beq  zero, zero, L      # always taken, PC-relative, one instruction
+beq  zero, zero, L      # always taken, PC-relative, 1 insn
 \end{lstlisting}
 
 This is a legal \texttt{beq} with both source registers hardwired to zero, so the comparison always
@@ -959,27 +965,31 @@ the synthesis sequence and calls \texttt{DONE}, preventing GCC from falling thro
 insn. The XOR synthesis illustrates the pattern:
 
 \begin{lstlisting}[language=Lisp]
-;; Native XOR (and OR) -- emitted only when TARGET_XOR (XOR) or always (IOR)
+;; Native XOR (and OR) -- emitted only when TARGET_XOR
+;; for XOR, and always for IOR
 (define_insn "*<optab><mode>3"
-  [(set (match_operand:X                0 "register_operand" "=r,r")
-        (any_or:X (match_operand:X 1 "register_operand" "%r,r")
-                       (match_operand:X 2 "arith_operand"    " r,I")))]
+  [(set (match_operand:X 0 "register_operand" "=r,r")
+        (any_or:X
+          (match_operand:X 1 "register_operand" "%r,r")
+          (match_operand:X 2 "arith_operand" " r,I")))]
   "TARGET_XOR || (<CODE>) == IOR"
   "<insn>%i2\t%0,%1,%2")
 
 ;; XOR/OR synthesis -- the any_or expand shared by both codes
 (define_expand "<optab><mode>3"
   [(set (match_operand:X 0 "register_operand")
-        (any_or:X (match_operand:X 1 "register_operand" "")
-                   (match_operand:X 2 "reg_or_const_int_operand" "")))]
+        (any_or:X
+          (match_operand:X 1 "register_operand" "")
+          (match_operand:X 2 "reg_or_const_int_operand" "")))]
   ""
 {
   /* sc1 synthesis: a ^ b = (a | b) - (a & b). */
   if ((<CODE>) == XOR && !TARGET_XOR)
     {
       rtx op1    = operands[1];
-      rtx op2    = REG_P (operands[2]) ? operands[2]
-                                       : force_reg (SImode, operands[2]);
+      rtx op2    = REG_P (operands[2])
+                   ? operands[2]
+                   : force_reg (SImode, operands[2]);
       rtx ab_and = gen_reg_rtx (SImode);
       rtx ab_ior = gen_reg_rtx (SImode);
       emit_insn (gen_andsi3 (ab_and, op1, op2));
@@ -988,9 +998,11 @@ insn. The XOR synthesis illustrates the pattern:
       DONE;
     }
   /* sc1 synthesis: ori rd, rs, imm -> li t, imm; or rd, rs, t */
-  if ((<CODE>) == IOR && !TARGET_ORI && CONST_INT_P (operands[2]))
+  if ((<CODE>) == IOR && !TARGET_ORI
+      && CONST_INT_P (operands[2]))
     operands[2] = force_reg (<MODE>mode, operands[2]);
-  if (CONST_INT_P (operands[2]) && synthesize_ior_xor (<OPTAB>, operands))
+  if (CONST_INT_P (operands[2])
+      && synthesize_ior_xor (<OPTAB>, operands))
     DONE;
 })
 \end{lstlisting}
@@ -1100,7 +1112,7 @@ offset range (12-bit signed immediate). For branch targets that exceed this rang
 emits a long form:
 
 \begin{lstlisting}
-beq  rs1, rs2, skip        # short branch: skip the jump if condition holds
+beq  rs1, rs2, skip        # skip the jump if condition holds
 lui  t1, %hi(target)
 addi t1, t1, %lo(target)
 jr   t1                    # absolute jump to target

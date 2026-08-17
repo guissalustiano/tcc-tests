@@ -88,7 +88,28 @@
   keepspaces=true,
   commentstyle=\color{gray},
   keywordstyle=\color{black},
+  % O espaçamento vertical em volta do bloco vem do envoltório abaixo, que
+  % precisa dele *fora* da minipage para que a quebra de página aconteça ali.
+  aboveskip=0pt,
+  belowskip=0pt,
 }
+
+% Nenhum bloco de código é partido entre duas páginas: uma derivação de síntese
+% cortada no meio, com metade das instruções em cada página, é ilegível.  Cada
+% lstlisting é embrulhado numa minipage, que o TeX não quebra; se o bloco não
+% couber no que resta da página, ele desce inteiro para a próxima.  Os
+% \addvspace ficam fora da minipage justamente para serem o ponto de quebra.
+%
+% Isso pressupõe que todo listing caiba numa página.  O maior (o trecho de
+% riscv.md na Seção "Machine Description Patterns") ocupa hoje uma página cheia,
+% com poucas linhas de folga; um bloco que passe disso invade a margem inferior,
+% e o pdflatex avisa ("Overfull \vbox").  Nesse caso, divida o listing em dois
+% em vez de remover o envoltório.
+\usepackage{etoolbox}
+\BeforeBeginEnvironment{lstlisting}{%
+  \par\addvspace{\medskipamount}\noindent\begin{minipage}{\linewidth}}
+\AfterEndEnvironment{lstlisting}{%
+  \end{minipage}\par\addvspace{\medskipamount}}
 % ---
 
 % ---

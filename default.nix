@@ -27,6 +27,7 @@ let
     enumitem relsize xpatch textcase              # required by abntex2.cls
     pdfpages eso-pic pdflscape                    # ficha catalográfica, landscape floats
     hyphenat                                      # line breaks inside \texttt paths
+    pgfplots                                      # slides/: Embench tamanho-vs-tempo
   ]);
 in
 

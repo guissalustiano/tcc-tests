@@ -1,0 +1,46 @@
+# Build for the TCC defence slides (beamer).
+#
+# Same shape as tcc-latex/justfile, and it reuses that directory's check_log.py
+# rather than carrying a second copy: the checks it applies (undefined \ref,
+# duplicate label, text in the margin) are the ones a beamer deck gets wrong
+# too, and a frame whose content runs past the bottom edge shows up there as an
+# overfull \vbox.  latexmk is still needed rather than one pdflatex pass,
+# because \tableofcontents on the outline frame does not settle until the
+# second.
+#
+# The toolchain comes from the project dev shell (default.nix); the deck needs
+# nothing beyond what the thesis already pulls in (beamer, tikz, listings).
+
+default: build
+
+# Build to a fixed point, then fail if the log reports anything.
+build: compile check
+
+compile:
+    latexmk -pdf -interaction=nonstopmode -halt-on-error slides.tex
+
+# One pdflatex pass. Fast while editing a frame; the outline will be whatever
+# the last full build left in slides.toc.
+quick:
+    pdflatex -interaction=nonstopmode -halt-on-error slides.tex
+
+# Rebuild on every save and keep a viewer open on the result.
+watch:
+    latexmk -pdf -pvc -interaction=nonstopmode slides.tex
+
+# A frame that overflows its own height is the failure mode here, and beamer
+# does not complain about it, so the threshold is low rather than the thesis's
+# 20pt: anything over a point means content is off the bottom of a slide.
+check:
+    python3 ../tcc-latex/check_log.py slides.log --overfull 1.0
+
+# Page thumbnails, to eyeball every frame at once instead of scrolling the PDF.
+contact-sheet:
+    pdftoppm -png -r 50 slides.pdf /tmp/slide
+    @echo "wrote /tmp/slide-*.png"
+
+clean:
+    latexmk -c
+
+distclean:
+    latexmk -C

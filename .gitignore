@@ -89,6 +89,14 @@ stamp-*
 # tests build directories
 /tests/sc*/build/
 /tests/sc*/build-binutils/
+/tests/sc*/build-newlib/
+
+# Release packaging: multi-gigabyte install trees and the tarballs made from
+# them.  The archives live on the GitHub release, not in the repository.
+/tests/release/
+/tests/build-logs/
+/tests/build-logs-summary*.txt
+/tests/package.log
 /tests/rv32i/build/
 /tests/rv32i/build-binutils/
 /tests/rv32i/build-newlib/

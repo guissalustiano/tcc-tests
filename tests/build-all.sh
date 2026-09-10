@@ -30,6 +30,11 @@ for n in 0 1 2 3 4 5 6 7; do
         continue
     fi
 
+    # A build killed mid-compile leaves zero-length objects that make treats
+    # as up to date, which surfaces much later as undefined references at
+    # link time.  Cheaper to drop them than to diagnose them twice.
+    [ -d "$d/build" ] && find "$d/build" -name '*.o' -size 0 -delete
+
     echo "=== $d: starting $(date -Is)"
     if [ "$n" = 0 ]; then
         recipes="configure-binutils build-binutils install-binutils configure build install"

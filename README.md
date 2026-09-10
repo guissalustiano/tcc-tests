@@ -20,9 +20,19 @@ through `CC1_SPEC`, so the restricted ISA is the default for that triple.
 
 ## Building the toolchain
 
-Sources sit side by side under the repo root: `gcc/` (this fork, tracked),
-`binutils-gdb/` and `newlib-src/` (untracked, cloned separately). Each target builds
-out of tree under `tests/scN/`.
+Sources sit side by side under the repo root. All three carry their own git
+history and are ignored by this repository, so a fresh checkout clones them:
+
+```sh
+git clone git@github.com:guissalustiano/gcc-hannersy-paterson.git gcc
+git -C gcc checkout hannersy-patterson     # 32d629dcf2e4
+git clone git@github.com:guissalustiano/binutils-gdb.git
+git -C binutils-gdb checkout master        # eaf407cc
+git clone git@github.com:guissalustiano/newlib-src.git
+git -C newlib-src checkout master          # f4c2d6a8d0a5
+```
+
+Each target builds out of tree under `tests/scN/`.
 
 ```sh
 cd tests/sc1

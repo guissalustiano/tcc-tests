@@ -292,8 +292,8 @@ produce no object are front-end rejections spanning four distinct causes: \textt
 \texttt{sys/mman.h} (10), x87-specific inline asm (5), and \texttt{\_Decimal} floating point (5), all
 of which Table~\ref{tab:torture-skips} attributes to the freestanding runtime or to 32-bit RISC-V in
 general rather than to sc1. Extending the check to the whole 8\,420 with the
-\texttt{--include-unsupported} form,- worth doing because a program that cannot link can still crash
-the compiler, adds the five upstream-flagged ``expensive'' sources and yields 8\,368 objects, every
+\texttt{--include-unsupported} form --- worth doing because a program that cannot link can still crash
+the compiler --- adds the five upstream-flagged ``expensive'' sources and yields 8\,368 objects, every
 one ISA-clean, still with no ICE, plus 17 exhausted compile budgets confined to those five sources.
 That last count is sensitive to machine load, as the affected compilations sit near the 120-second
 budget, the ISA-compliance and ICE counts are not, and are the meaningful results.
@@ -301,6 +301,35 @@ budget, the ISA-compliance and ICE counts are not, and are the meaningful result
 The failure list of the behavioral sweep is committed alongside the harness, so that the next sweep
 diffs against it rather than scrolling past. Every one of the 8\,345 combinations that compiles, links
 and runs terminates with the exit status its assertions require.
+
+\subsubsection{Linked-Program ISA Compliance} \label{sec:sc1-linked-isa}
+
+Every result reported so far concerns what the compiler \textit{emitted}, which is the correct scope
+for a claim about a compiler but a narrower one than it is easily read as. For as long as
+\texttt{libgcc} supplied its division and multiplication routines as hand-written assembly, every
+object the compiler produced was ISA-clean and every program that divided nevertheless executed
+instructions rvsc1 does not implement. Neither static checker looked, because both disassemble
+compiler output; and the simulator could not object, because it runs with the wider \texttt{--isa}
+the proxy kernel requires.
+
+A fourth check therefore applies the allowlist to the whole linked executable, partitioned as
+described in Section~\ref{sec:strategy-isa}. Across the forty linked behavioral binaries --- eight
+programs at five optimization levels --- the program's own code and every library the compiler
+generated, \texttt{libgcc} included, contain only the ten instructions sc1 implements. The second
+partition holds only hand-written assembly that never passes through the machine description, and
+therefore never sees \texttt{-mno-shift} and its siblings: the C runtime start-up code
+(\texttt{\_start}) and the proxy-kernel system-call stubs (\texttt{\_read}, \texttt{\_write},
+\texttt{\_sbrk}, \texttt{\_close}, \texttt{\_lseek}, \texttt{\_exit}).
+
+That partition was larger. newlib mapped the \texttt{rvsc*} triples to its RISC-V machine directory,
+whose hand-written \texttt{memset}, \texttt{memcpy}, \texttt{memmove} and \texttt{strcmp} shadow the
+generic C implementations --- the same defect as the \texttt{libgcc} one, hidden in the same way and
+found by the same check. The fix is a machine directory of the \texttt{rvsc*} triples' own, holding
+\texttt{setjmp.S} alone, the one file with no generic C equivalent, with its \texttt{seqz} (an alias
+for \texttt{sltiu}) rewritten as \texttt{beq}. What remains cannot be removed by any change to this
+work: a program that talks to a host needs some mechanism to do so, and a bare-metal sc1 processor
+has none --- which is why the rvsc0 harness runs with no C library at all, and why the start-up and
+system-call code is absent from anything that would run on the student's own hardware.
 
 \subsection{rvsc2} \label{sec:sc2-isa-tests}
 

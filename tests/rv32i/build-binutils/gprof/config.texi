@@ -1,1 +1,0 @@
-@set top_srcdir /home/salust/p/scgcc/tests/rv32i/../../binutils-gdb/gprof

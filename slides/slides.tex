@@ -1,7 +1,7 @@
 \documentclass[aspectratio=169]{beamer} % 16:9 widescreen layout
 
 \usepackage[utf8]{inputenc}
-\usepackage[brazil]{babel}
+\usepackage[english]{babel}
 \usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{listings}
@@ -30,16 +30,16 @@
         columns=fullflexible, showstringspaces=false, frame=none}
 
 \title[GCC target for educational RISC-V processor]{GCC target for educational RISC-V processor}
-\subtitle{Trabalho de Conclusão de Curso}
-\author[G. S. Salustiano]{Guilherme Stabach Salustiano \\ \footnotesize Orientador: Prof. Bruno de Carvalho Albertini}
+\subtitle{Undergraduate Final Project}
+\author[G. S. Salustiano]{Guilherme Stabach Salustiano \\ \footnotesize Advisor: Prof. Bruno de Carvalho Albertini}
 \institute[PCS - EPUSP]{
-    Departamento de Engenharia de Computação e Sistemas Digitais (PCS)\\
-    Escola Politécnica da Universidade de São Paulo (EPUSP)
+    Department of Computer and Digital Systems Engineering (PCS)\\
+    Escola Politécnica, University of São Paulo (EPUSP)
 }
 \date{2026}
 
-% escala logarítmica da Figura 3 (definida no preâmbulo: '#' não sobrevive
-% dentro de um frame não-fragile)
+% logarithmic scale for the Embench chart (defined in the preamble: '#' does
+% not survive inside a non-fragile frame)
 \newcommand{\lx}[1]{\plotw*ln(#1)/ln(\xmax)}
 
 \begin{document}
@@ -48,34 +48,34 @@
 \begin{frame}
     \titlepage
 \end{frame}
-% FALAR:
-% - Bom dia, sou o Guilherme, orientado pelo prof. Bruno Albertini.
-% - O trabalho é um backend de GCC que compila C para o processador
-%   mono-ciclo do Hennessy-Patterson, o mesmo usado em PCS3225.
-% - A ideia central: toda instrução que o hardware não tem, o compilador
-%   sintetiza com as que ele tem.
+% SAY:
+% - Good morning, I am Guilherme, advised by Prof. Bruno Albertini.
+% - This work is a GCC backend that compiles C for the Hennessy-Patterson
+%   single-cycle processor, the same one used in PCS3225.
+% - The core idea: every instruction the hardware lacks, the compiler
+%   synthesizes out of the ones it has.
 
 % ------------------------------------------------------------------
-\begin{frame}{Sumário}{Roteiro da apresentação}
+\begin{frame}{Outline}{Roadmap}
     \tableofcontents
 \end{frame}
-% FALAR:
-% - Contexto do processador didático, motivação e objetivo.
-% - Como o GCC gera código e onde eu intervenho.
-% - Um exemplo completo de síntese (XOR) e a tabela de custos.
-% - Validação em quatro camadas e os resultados de custo.
+% SAY:
+% - Context of the teaching processor, motivation and objective.
+% - How GCC generates code and where I intervene.
+% - A full synthesis example (XOR) and the cost table.
+% - Validation, and the cost results.
 
 % ==================================================================
-\section{Contexto e Motivação}
+\section{Context and Motivation}
 
-\begin{frame}{O processador Hennessy--Patterson}{Contexto}
+\begin{frame}{The Hennessy--Patterson processor}{Context}
     \begin{columns}[T]
     \begin{column}{0.4\textwidth}
         \begin{itemize}
-            \item \textit{Computer Organization and Design: RISC-V Edition} é
-                  a referência em curso de arquitetura de computadores.
-            \item Usado em Sistemas Digitais II (PCS3225) na Poli.
-            \item Implementa um processador mono-ciclo com 8 instruções:
+            \item \textit{Computer Organization and Design: RISC-V Edition} is
+                  the reference in computer architecture courses.
+            \item Used in Digital Systems II (PCS3225) at Poli.
+            \item It implements a single-cycle processor with 8 instructions:
                   \texttt{lw sw beq add addi sub and or}
         \end{itemize}
     \end{column}
@@ -83,51 +83,51 @@
         \includegraphics[width=\textwidth]{hannersy-patterson-implementation-fig4-21.png}
 
         \vspace{0.3em}
-        \tiny Fonte: Patterson \& Hennessy, \textit{Computer Organization and
-        Design: RISC-V Edition}, 2ª ed., 2020, Figura 4.21.
+        \tiny Source: Patterson \& Hennessy, \textit{Computer Organization and
+        Design: RISC-V Edition}, 2nd ed., 2020, Figure 4.21.
     \end{column}
     \end{columns}
 \end{frame}
-% FALAR:
-% - O livro do Patterson e Hennessy é a referência do curso.
-% - O aluno implementa em VHDL exatamente esse datapath (Figura 4.21).
-% - São oito instruções: dois acessos a memória, um branch e cinco de ALU.
-% - Não há lui, não há jalr: nem endereço grande, nem chamada de função.
+% SAY:
+% - The Patterson and Hennessy book is the course reference.
+% - Students implement exactly this datapath (Figure 4.21) in VHDL.
+% - Eight instructions: two memory accesses, one branch, five ALU operations.
+% - No lui, no jalr: no large addresses, and no function calls.
 
-\begin{frame}{Problema}{Motivação}
+\begin{frame}{Problem}{Motivation}
     \vspace{0.5em}
     {\centering\Large\color{PoliBlue}
-     Não há compilador para apenas 8 instruções.\par}
+     There is no compiler for only 8 instructions.\par}
     \vspace{1em}
     \begin{itemize}
-        \item GCC e Clang geram no mínimo 40 instruções (RV32I).
-        \item Alunos e professores precisam escrever os programas manualmente
-              em assembly, limitando o tamanho dos programas.
-        \item Perde-se a oportunidade de integrar o conhecimento de C do
-              aluno, introduzindo a tradução e otimização de compiladores.
+        \item GCC and Clang emit at least 40 instructions (RV32I).
+        \item Students and instructors have to write programs by hand in
+              assembly, which caps how large those programs can get.
+        \item The chance to build on the C the students already know, and to
+              introduce compiler translation and optimization, is lost.
     \end{itemize}
 \end{frame}
-% FALAR:
-% - O descasamento é simples: o compilador mais restrito que existe já emite
-%   muito mais do que o hardware do aluno entende.
-% - Então o laboratório fica preso a assembly manual e a programas de brinquedo.
-% - E o elo hardware-software, que é o ponto pedagógico, não fecha.
+% SAY:
+% - The mismatch is simple: even the most restricted compiler emits far more
+%   than the student's hardware understands.
+% - So the lab stays stuck with hand-written assembly and toy programs.
+% - And the hardware-software link, which is the pedagogical point, never closes.
 
-\begin{frame}{Objetivo}
-    Gerar assembly a partir de C para conjuntos de instruções
-    progressivos, sintetizando toda instrução ausente com uma
-    sequência equivalente no GCC.
+\begin{frame}{Objective}
+    Generate assembly from C for progressively larger instruction sets,
+    synthesizing every missing instruction with an equivalent sequence
+    inside GCC.
 
     \vspace{1em}
     \centering\small
     \begin{tabular}{ll}
         \toprule
-        \textbf{Alvo} & \textbf{ISA} \\
+        \textbf{Target} & \textbf{ISA} \\
         \midrule
         rvsc0 & \texttt{lw sw beq add addi sub and or} \\
         rvsc1 & + \texttt{lui}, \texttt{jalr} \\
         rvsc2 & RV32I $-$ fence $-$ Zicsr \\
-        rvsc3 & RV32I completo \\
+        rvsc3 & full RV32I \\
         rvsc4 & RV64I \\
         rvsc5 & RV64IM \\
         rvsc6 & RV64IMFD + Zicsr \\
@@ -135,56 +135,56 @@
         \bottomrule
     \end{tabular}
 \end{frame}
-% FALAR:
-% - Oito alvos, cada um adicionando um grupo de instruções.
-% - rvsc0 é exatamente o processador do livro.
-% - rvsc1 acrescenta lui e jalr: é o primeiro alvo com chamada de função, ou
-%   seja, o primeiro que compila um programa C de verdade.
-% - Do rvsc3 em diante é RISC-V padrão; o interesse está nos dois primeiros.
-% - A progressão acompanha a evolução do processador ao longo do curso.
+% SAY:
+% - Eight targets, each adding one group of instructions.
+% - rvsc0 is exactly the processor from the book.
+% - rvsc1 adds lui and jalr: the first target with function calls, and
+%   therefore the first that compiles a real C program.
+% - From rvsc3 on it is standard RISC-V; the interest is in the first two.
+% - The progression follows how the processor evolves during the course.
 
-\section{Trabalhos Relacionados}
+\section{Related Work}
 
-\begin{frame}{Trabalhos relacionados}
+\begin{frame}{Related work}
     \begin{itemize}
-        \item \textbf{Berkeley SoftFloat} — ponto flutuante em software.
-        \item \textbf{MSP430}: \texttt{\_\_mspabi\_slli\_n} — shift de vários
-              bits em ISA single shift.
-        \item \textbf{AVR}: \texttt{\_\_mulhi3} — multiplicação em software.
+        \item \textbf{Berkeley SoftFloat} --- floating point in software.
+        \item \textbf{MSP430}: \texttt{\_\_mspabi\_slli\_n} --- multi-bit shift
+              on a single-shift ISA.
+        \item \textbf{AVR}: \texttt{\_\_mulhi3} --- multiplication in software.
     \end{itemize}
 \end{frame}
-% FALAR:
-% - Compilar para hardware incompleto não é novo: falta FPU, falta multiplicador.
-% - A saída clássica é uma função de biblioteca, o libgcc.
-% - Isso não serve aqui por dois motivos: o rvsc0 não consegue nem chamar
-%   função, e uma chamada esconde do aluno o custo real da instrução.
-% - Por isso a síntese é feita na machine description, inline.
-% - Isso eh feito via lib, n tem necessidade de mexer no codigo do compilador
+% SAY:
+% - Compiling for incomplete hardware is not new: no FPU, no multiplier.
+% - The classic answer is a library routine, libgcc.
+% - That does not work here for two reasons: rvsc0 cannot even make a call,
+%   and a call hides the real cost of the instruction from the student.
+% - All of these are solved in a library, without touching the compiler.
+% - Here the synthesis lives in the machine description, inline.
 
 % ==================================================================
-\section{Desenvolvimento}
+\section{Development}
 
-\begin{frame}{GCC Pipeline}
+\begin{frame}{GCC pipeline}
     \begin{center}
         \includegraphics[width=0.9\textwidth]{gcc-internal-flow.jpg}
 
         \vspace{0.2em}
-        \tiny Fonte: AlexeySmirnov, \textit{GNU C Compiler Internals}
-        (Wikibooks), arquivo \texttt{Gcc.JPG}, CC BY-SA 3.0.
+        \tiny Source: AlexeySmirnov, \textit{GNU C Compiler Internals}
+        (Wikibooks), file \texttt{Gcc.JPG}, CC BY-SA 3.0.
     \end{center}
 \end{frame}
-% FALAR:
-% - Este é o pipeline do GCC, e o ponto que importa é um só: o expand.
-% - O expand é o momento em que o GCC pergunta à descrição da máquina
-%   "como eu faço um xor aqui?".
-% - Se eu responder com três instruções em vez de uma, o xor deixa de existir.
-% - Fazer no expand, e não depois, é o que garante a corretude por construção:
-%   não há como um passe de otimização trazer de volta o que nunca esteve lá.
+% SAY:
+% - This is the GCC pipeline, and only one point matters: expand.
+% - Expand is the moment GCC asks the machine description
+%   "how do I do an xor here?".
+% - If I answer with three instructions instead of one, the xor stops existing.
+% - Doing it at expand, and not later, is what gives correctness by
+%   construction: no optimization pass can bring back what was never there.
 
-\begin{frame}[fragile]{Exemplo: XOR}
+\begin{frame}[fragile]{Example: XOR}
     \lstset{basicstyle=\ttfamily\normalsize}
     \large
-    \textbf{Codigo}
+    \textbf{Source}
 \begin{lstlisting}[language=C]
 int f(int a, int b) { return a ^ b; }
 \end{lstlisting}
@@ -205,12 +205,12 @@ f:
 \end{lstlisting}
 \end{frame}
 
-% FALAR:
-% - Primeiro o caminho normal, com TARGET_XOR ligado.
-% - O expand não faz nada: o define_insn casa direto e sai um xor.
-% - Guardem o RTL do meio: é ele que muda no próximo slide.
+% SAY:
+% - First the normal path, with TARGET_XOR enabled.
+% - Expand does nothing: the define_insn matches directly and an xor comes out.
+% - Keep an eye on the RTL in the middle: that is what changes next slide.
 
-\begin{frame}[fragile]{Exemplo: "soft" XOR}
+\begin{frame}[fragile]{Example: "soft" XOR}
     \lstset{basicstyle=\ttfamily\normalsize}
     \large
     \textbf{RTL}
@@ -229,20 +229,20 @@ f:
     ret
 \end{lstlisting}
 \end{frame}
-% FALAR:
-% - Mesmo fonte, mesmo GIMPLE. A única diferença é a flag -mno-xor, que o
-%   header do alvo injeta sozinho pelo CC1_SPEC.
-% - O expand vê que xor não existe, emite a identidade e chama DONE.
-% - Custo real: 3 instruções e 1 registrador extra.
-% - São dois pseudo-registradores (138 e 139), não um reaproveitado: é essa
-%   aresta de fluxo de dados que impede o alocador de corromper a|b.
-% - O REG_EQUAL preserva a semântica para CSE e combine sem permitir que
-%   nenhum deles reintroduza o xor.
-% - Os dois pseudos não são detalhe estético: a versão anterior, por De Morgan,
-%   reaproveitava um registrador, o IRA aliasou e o código saía errado. Foi um
-%   bug real que os testes comportamentais pegaram.
+% SAY:
+% - Same source, same GIMPLE. The only difference is the -mno-xor flag, which
+%   the target header injects by itself through CC1_SPEC.
+% - Expand sees that xor does not exist, emits the identity and calls DONE.
+% - Real cost: 3 instructions and 1 extra register.
+% - There are two pseudo-registers (138 and 139), not one reused: that is the
+%   dataflow edge that stops the allocator from clobbering a|b.
+% - REG_EQUAL preserves the semantics for CSE and combine without letting
+%   either of them reintroduce the xor.
+% - The two pseudos are not cosmetic: the earlier De Morgan form reused a
+%   register, IRA aliased it and the code came out wrong. That was a real bug,
+%   caught by the behavioral tests.
 
-\begin{frame}[fragile]{Exemplo: SLL}
+\begin{frame}[fragile]{Example: SLL}
     \vspace{0.5em}
     {\centering\large\color{PoliBlue}
      $\mathrm{sll}(x,0) = x$
@@ -254,30 +254,30 @@ f:
     \lstset{basicstyle=\ttfamily\normalsize}
     \large
     \begin{itemize}
-        \item Se $n$ imediato:
+        \item If $n$ is immediate:
 \begin{lstlisting}
 add rd, rd, rd
-... # n vezes
+... # n times
 \end{lstlisting}
-        \item Se $n$ parametrizado:
+        \item If $n$ is a parameter:
 \begin{lstlisting}[language=C]
 for (uint32_t rd = rs1, i = 0; i < rs2; i++) rd += rd;
 \end{lstlisting}
     \end{itemize}
 \end{frame}
-% FALAR:
-% - Cada síntese vem de uma derivação algébrica, não de tentativa e erro.
-% - Shift à esquerda é o caso mais limpo: por indução, é soma consigo mesmo.
-% - Com contagem constante o custo é trivial e o código é reto.
-% - Com contagem variável, em vez de um laço que decrementa, eu decomponho a
-%   contagem em binário: cinco testes de bit cobrem qualquer valor de 0 a 31.
-% - Isso derrubou o pior caso de 187 para 47 instruções.
+% SAY:
+% - Every synthesis comes from an algebraic derivation, not from trial and error.
+% - Left shift is the cleanest case: by induction, it is adding a value to itself.
+% - With a constant count the cost is trivial and the code is straight-line.
+% - With a variable count, instead of a counting-down loop, I decompose the
+%   count in binary: five bit tests cover any value from 0 to 31.
+% - That took the worst case from 187 down to 47 instructions.
 
-\begin{frame}{Custo teorico}
+\begin{frame}{Theoretical dynamic cost}
     \centering\scriptsize
     \begin{tabular}{lrr}
         \toprule
-        \textbf{Operação} & \textbf{Pior caso} & \textbf{Regs extras} \\
+        \textbf{Operation} & \textbf{Worst case} & \textbf{Extra regs} \\
         \midrule
         \texttt{not}                       & 2        & 0 \\
         \texttt{xor} (reg / imm)           & 3 / 4    & 1 / 2 \\
@@ -297,265 +297,221 @@ for (uint32_t rd = rs1, i = 0; i < rs2; i++) rd += rd;
         \bottomrule
     \end{tabular}
 \end{frame}
-% FALAR:
-% - Estes são números medidos, não estimados: rodo um laço com a operação e um
-%   laço vazio no simulador e subtraio, então o overhead cancela exato.
-% - Duas leituras importantes.
-% - Primeira: o custo varia três ordens de grandeza. NOT custa 2; um load de
-%   byte com endereço desconhecido custa 460.
-% - Segunda: "lane conhecida" versus "desconhecida" são sequências diferentes,
-%   não um intervalo. Se o compilador sabe em que byte da palavra o dado está
-%   (global, variável local, campo de struct), toda a aritmética de endereço
-%   some. É a otimização que mais rendeu.
+% SAY:
+% - These are measured numbers, not estimates: I run a loop with the operation
+%   and an empty loop on the simulator and subtract, so the overhead cancels
+%   exactly.
+% - Two readings matter.
+% - First: the cost spans three orders of magnitude. NOT costs 2; a byte load
+%   with an unknown address costs 460.
+% - Second: "known lane" versus "unknown lane" are different sequences, not a
+%   range. If the compiler knows which byte of the word the datum sits in
+%   (a global, a local, a struct field), the whole address arithmetic
+%   disappears. That was the single most profitable optimization.
 
 % ==================================================================
-\section{Validação}
+\section{Validation}
 
-\begin{frame}{Base de validação}{Metodologia}
+\begin{frame}{Testing}{Methodology}
+    \begin{itemize}
+        \item \textbf{Static validation:} \texttt{objdump -M no-aliases} and a
+              check of every generated mnemonic against the allowed list.
+        \item \textbf{Behaviour validation:} programs that validate themselves
+              through \texttt{assert} in their own code, executed on the
+              Spike emulator.
+    \end{itemize}
+    \vfill
+\end{frame}
+
+\begin{frame}{Validation base}{Methodology}
     \begin{itemize}
         \item \textbf{rvsc0}
         \begin{itemize}
-            \item 12 \textit{smoke tests} escritos à mão.
+            \item 72 hand-written smoke tests.
         \end{itemize}
         \item \textbf{rvsc1}
         \begin{itemize}
-            \item 8 \textit{smoke tests} escritos à mão.
-            \item GCC \textit{torture suite}: 1684 programas usados pelo
-                  próprio GCC.
+            \item 48 hand-written smoke tests.
+            \item GCC torture suite: 1684 programs used by GCC itself.
+        \end{itemize}
+        \item \textbf{rvsc2}
+        \begin{itemize}
+            \item 3 hand-written smoke tests.
         \end{itemize}
     \end{itemize}
     \vfill
-    \centering Cada teste em 5 níveis de otimização
+    \centering Every test at 5 optimization levels
     (\texttt{-O0} \dots{} \texttt{-Os}).
 \end{frame}
 
-\begin{frame}{Teste}{Metodologia}
+% SAY:
+% - Validation answers two different questions, which is why it is layered.
+% - "Correct by construction": no forbidden mnemonic was emitted. That is static.
+% - "Correct by execution": the computed value is what C requires. That runs.
+% - The torture suite is what gives scale: 1684 programs I did not write.
+% - Checking the linked ELF matters because the static check only looks at what
+%   the compiler produced; the library shipped hand-written assembly with
+%   forbidden instructions, and only that check caught it.
+
+\begin{frame}{Torture suite (rvsc1)}{Result}
     \begin{itemize}
-        \item \textbf{Validação estática:} \texttt{objdump -M no-aliases} e
-              checagem das operações geradas contra a lista permitida.
-        \item \textbf{Validação dinâmica:} programas validados por
-              \texttt{assert} no próprio código e executados no emulador
-              \textbf{Spike}.
-    \end{itemize}
-    \vfill
-\end{frame}
-
-
-
-% FALAR:
-% - A validação responde duas perguntas diferentes, e por isso são camadas.
-% - "Correto por construção": nenhum mnemônico proibido saiu. Isso é estático.
-% - "Correto por execução": o valor calculado é o que o C manda. Isso roda.
-% - A terceira camada é o que dá escala: 1684 programas que eu não escrevi.
-% - A quarta existe porque a primeira olha só o que o compilador gerou; a
-%   biblioteca tinha assembly escrito à mão com instruções proibidas, e só a
-%   verificação do ELF ligado pegou isso.
-
-\begin{frame}{Torture suite test (rvsc1)}{Resultado}
-    \begin{itemize}
-        \item 13 testes precisaram ser pulados:
+        \item 13 tests had to be skipped:
         \begin{itemize}
             \item \texttt{run\_expensive\_tests} (timeout)
             \item \texttt{c99\_runtime}
             \item \texttt{int128}
-            \item \texttt{mmap} e \texttt{dfp}
+            \item \texttt{mmap} and \texttt{dfp}
         \end{itemize}
-        \item \textbf{1669 testes passaram} gerando apenas as 10 instruções
-              do sc1, totalizando \textbf{8345 execuções}.
+        \item \textbf{1669 tests passed} emitting only the 10 sc1
+              instructions, for a total of \textbf{8345 runs}.
     \end{itemize}
 \end{frame}
-% FALAR:
-% - Este é o número que dá confiança no trabalho: oito mil e trezentas
-%   combinações de programa e nível de otimização, zero falhas.
-% - O ponto delicado é o skip: um skip pode esconder uma falha.
-% - Por isso a lista de skip é derivada, não curada: eu leio a diretiva
-%   dg-require do próprio teste, a mesma regra que o DejaGnu aplica.
-% - E confirmei por comparação que um GCC rv32i normal falha exatamente os
-%   mesmos casos, então nenhum deles é culpa da ISA restrita.
-% - Zero ICE quer dizer que o compilador nunca quebrou.
+% SAY:
+% - This is the number that gives confidence in the work: eight thousand three
+%   hundred program/optimization-level combinations, zero failures.
+% - The delicate part is the skips: a skip can hide a failure.
+% - So the skip list is derived, not curated: I read the test's own dg-require
+%   directive, the same rule DejaGnu applies.
+% - And I confirmed by comparison that a plain rv32i GCC fails exactly the same
+%   cases, so none of them is the restricted ISA's fault.
+% - Zero ICEs means the compiler never crashed.
 
 % ==================================================================
-\begin{frame}{Embench-IoT benchmark}{Resultado}
+\begin{frame}{Embench-IoT benchmark}{Result}
     \begin{itemize}
-        \item Suíte livre de benchmarks para \textbf{IoT / embarcado} ---
-              programas reais e pequenos, sem dependência de sistema
-              operacional.
-        \item \textbf{19 casos}: criptografia (\texttt{nettle-aes},
+        \item Free benchmark suite for \textbf{IoT / embedded} --- small, real
+              programs with no operating system dependency.
+        \item \textbf{19 cases}: cryptography (\texttt{nettle-aes},
               \texttt{nettle-sha256}, \texttt{md5sum}, \texttt{crc32}),
-              processamento de sinal e imagem (\texttt{edn},
+              signal and image processing (\texttt{edn},
               \texttt{picojpeg}, \texttt{depthconv}, \texttt{qrduino}),
-              estruturas de dados e strings (\texttt{sglib-combined},
+              data structures and strings (\texttt{sglib-combined},
               \texttt{slre}, \texttt{wikisort}, \texttt{huffbench},
-              \texttt{tarfind}), aritmética e controle
+              \texttt{tarfind}), arithmetic and control
               (\texttt{aha-mont64}, \texttt{matmult-int}, \texttt{ud},
               \texttt{xgboost}, \texttt{statemate}, \texttt{nsichneu}).
-        \item Duas medidas independentes: \textbf{tamanho} (\texttt{.text} a
-              \texttt{-O2}) e \textbf{tempo} (instruções retiradas no Spike).
-        \item Três \textit{toolchains}: \textbf{gcc17} (mesmo \textit{fork},
-              \texttt{riscv32-unknown-elf}) / \textbf{rvsc2} (nativo) /
-              \textbf{rvsc1} (sintetizado).
+        \item Two independent measures: \textbf{size} (\texttt{.text} at
+              \texttt{-O2}) and \textbf{time} (retired instructions on Spike).
+        \item Two toolchains: \textbf{\texttt{riscv32-unknown-elf}} / \textbf{rvsc1-unknown-elf} (synthesized).
     \end{itemize}
 \end{frame}
 
-\section{Resultados}
+\section{Results}
 
-\begin{frame}{Custo estático}{Resultados}
-    \centering\tiny
-    \begin{tabular}{lrrr@{\qquad}lrrr}
+\begin{frame}{Static cost}{Results}
+    \centering\small
+    \renewcommand{\arraystretch}{1.25}
+    \begin{tabular}{lr@{\qquad}lr@{\qquad}lr}
         \toprule
-        \textbf{Benchmark} & \textbf{gcc17} & \textbf{rvsc1} & \textbf{razão} &
-        \textbf{Benchmark} & \textbf{gcc17} & \textbf{rvsc1} & \textbf{razão} \\
+        \textbf{Benchmark} & \textbf{ratio} & \textbf{Benchmark} & \textbf{ratio} & \textbf{Benchmark} & \textbf{ratio} \\
         \midrule
-        \texttt{aha-mont64} & 3.548 & 28.468 & $\times 8{,}02$ & \texttt{picojpeg} & 15.360 & 201.204 & $\times 13{,}10$ \\
-        \texttt{crc32} & 380 & 1.752 & $\times 4{,}61$ & \texttt{qrduino} & 12.852 & 286.212 & $\times 22{,}27$ \\
-        \texttt{depthconv} & 608 & 5.820 & $\times 9{,}57$ & \texttt{sglib-combined} & 10.824 & 34.596 & $\times 3{,}20$ \\
-        \texttt{edn} & 3.244 & 59.344 & $\times 18{,}29$ & \texttt{slre} & 4.256 & 44.408 & $\times 10{,}43$ \\
-        \texttt{huffbench} & 2.140 & 15.936 & $\times 7{,}45$ & \texttt{statemate} & 6.484 & 25.160 & $\times 3{,}88$ \\
-        \texttt{matmult-int} & 936 & 1.500 & $\times 1{,}60$ & \texttt{tarfind} & 528 & 4.772 & $\times 9{,}04$ \\
-        \texttt{md5sum} & 1.016 & 3.140 & $\times 3{,}09$ & \texttt{ud} & 1.436 & 1.964 & $\times 1{,}37$ \\
-        \texttt{nettle-aes} & 4.444 & 117.652 & $\times 26{,}47$ & \texttt{wikisort} & 7.744 & 38.812 & $\times 5{,}01$ \\
-        \texttt{nettle-sha256} & 6.976 & 138.472 & $\times 19{,}85$ & \texttt{xgboost} & 624 & 9.456 & $\times 15{,}15$ \\
-        \texttt{nsichneu} & 19.668 & 48.548 & $\times 2{,}47$ & & & & \\
+        \texttt{aha-mont64} & $\times 8.02$ & \texttt{nettle-aes} & $\times 26.47$ & \texttt{statemate} & $\times 3.88$ \\
+        \texttt{crc32} & $\times 4.61$ & \texttt{nettle-sha256} & $\times 19.85$ & \texttt{tarfind} & $\times 9.04$ \\
+        \texttt{depthconv} & $\times 9.57$ & \texttt{nsichneu} & $\times 2.47$ & \texttt{ud} & $\times 1.37$ \\
+        \texttt{edn} & $\times 18.29$ & \texttt{picojpeg} & $\times 13.10$ & \texttt{wikisort} & $\times 5.01$ \\
+        \texttt{huffbench} & $\times 7.45$ & \texttt{qrduino} & $\times 22.27$ & \texttt{xgboost} & $\times 15.15$ \\
+        \texttt{matmult-int} & $\times 1.60$ & \texttt{sglib-combined} & $\times 3.20$ &  &  \\
+        \texttt{md5sum} & $\times 3.09$ & \texttt{slre} & $\times 10.43$ &  &  \\
         \midrule
-        \multicolumn{7}{r}{\textbf{média geométrica}} & $\mathbf{\times 6{,}99}$ \\
+        \multicolumn{5}{r}{\textbf{geometric mean}} & $\mathbf{\times 6.99}$ \\
         \bottomrule
     \end{tabular}
-
-    \vspace{0.6em}
-    \normalsize \textbf{rvsc2 é idêntico ao gcc17 nos 19 benchmarks.}
 \end{frame}
-% FALAR:
-% - Comparo três toolchains: o GCC upstream, o rvsc2 e o rvsc1.
-% - O resultado do rvsc2 é o controle do experimento: código byte a byte igual
-%   ao upstream. Ou seja, o backend em si não introduz regressão nenhuma.
-% - No rvsc1 o código cresce sete vezes em média, mas a média esconde o que
-%   interessa: a faixa vai de 1,4 a 26 vezes.
-% - Quem paga caro é quem usa muito o que falta. AES é rotação e byte, que são
-%   justamente as duas sínteses mais caras.
+% SAY:
+% - I compare three toolchains: upstream GCC, rvsc2 and rvsc1.
+% - rvsc2 is the control of the experiment: code byte-for-byte identical to
+%   upstream. The backend itself introduces no regression.
+% - With rvsc1 the code grows sevenfold on average, but the average hides what
+%   matters: the range runs from 1.4x to 26x.
+% - The ones that pay are the ones that lean on what is missing. AES is
+%   rotations and byte access, the two most expensive syntheses.
 
-\begin{frame}{Custo dinâmico}{Resultado}
-    \centering\tiny
-    Instruções retiradas no Spike (milhões).
+\begin{frame}{Dynamic cost}{Result}
+    \centering\small
+    \renewcommand{\arraystretch}{1.25}
+    Retired instructions on Spike (millions).
     \vspace{0.4em}
 
-    \begin{tabular}{lrrr@{\qquad}lrrr}
+    \begin{tabular}{lr@{\qquad}lr@{\qquad}lr}
         \toprule
-        \textbf{Benchmark} & \textbf{gcc17} & \textbf{rvsc1} & \textbf{razão} &
-        \textbf{Benchmark} & \textbf{gcc17} & \textbf{rvsc1} & \textbf{razão} \\
+        \textbf{Benchmark} & \textbf{ratio} & \textbf{Benchmark} & \textbf{ratio} & \textbf{Benchmark} & \textbf{ratio} \\
         \midrule
-        \texttt{aha-mont64} & 13,0 & 196,6 & $\times 15{,}1$ & \texttt{picojpeg} & 3,6 & 108,4 & $\times 30{,}1$ \\
-        \texttt{crc32} & 6,0 & 148,5 & $\times 24{,}8$ & \texttt{qrduino} & 5,1 & 159,0 & $\times 30{,}9$ \\
-        \texttt{depthconv} & 54,6 & 626,3 & $\times 11{,}5$ & \texttt{sglib-combined} & 3,0 & 78,3 & $\times 26{,}0$ \\
-        \texttt{edn} & 68,6 & 476,3 & $\times 6{,}9$ & \texttt{slre} & 3,0 & 43,4 & $\times 14{,}6$ \\
-        \texttt{huffbench} & 2,4 & 55,9 & $\times 23{,}3$ & \texttt{statemate} & 2,1 & 12,6 & $\times 6{,}1$ \\
-        \texttt{matmult-int} & 24,4 & 86,8 & $\times 3{,}6$ & \texttt{tarfind} & 5,3 & 265,9 & $\times 50{,}3$ \\
-        \texttt{md5sum} & 2,9 & 20,7 & $\times 7{,}1$ & \texttt{ud} & 6,6 & 259,2 & $\times 39{,}1$ \\
-        \texttt{nettle-aes} & 4,7 & 124,4 & $\times 26{,}6$ & \texttt{wikisort} & 1,6 & 10,2 & $\times 6{,}3$ \\
-        \texttt{nettle-sha256} & 4,9 & 105,5 & $\times 21{,}5$ & \texttt{xgboost} & 3,8 & 225,3 & $\times 59{,}2$ \\
-        \texttt{nsichneu} & 2,5 & 9,5 & $\times 3{,}8$ &  & &  \\
+        \texttt{aha-mont64} & $\times 15.1$ & \texttt{nettle-aes} & $\times 26.6$ & \texttt{statemate} & $\times 6.1$ \\
+        \texttt{crc32} & $\times 24.8$ & \texttt{nettle-sha256} & $\times 21.5$ & \texttt{tarfind} & $\times 50.3$ \\
+        \texttt{depthconv} & $\times 11.5$ & \texttt{nsichneu} & $\times 3.8$ & \texttt{ud} & $\times 39.1$ \\
+        \texttt{edn} & $\times 6.9$ & \texttt{picojpeg} & $\times 30.1$ & \texttt{wikisort} & $\times 6.3$ \\
+        \texttt{huffbench} & $\times 23.3$ & \texttt{qrduino} & $\times 30.9$ & \texttt{xgboost} & $\times 59.2$ \\
+        \texttt{matmult-int} & $\times 3.6$ & \texttt{sglib-combined} & $\times 26.0$ &  &  \\
+        \texttt{md5sum} & $\times 7.1$ & \texttt{slre} & $\times 14.6$ &  &  \\
         \midrule
-        \multicolumn{7}{r}{\textbf{média geométrica}} & $\mathbf{\times 15{,}8}$ \\
+        \multicolumn{5}{r}{\textbf{geometric mean}} & $\mathbf{\times 15.8}$ \\
         \bottomrule
     \end{tabular}
-
-    \vspace{0.6em}
-    \normalsize \textbf{Todos os 19 benchmarks executam corretamente.}
 \end{frame}
 
-\begin{frame}{Custo estático x dinâmico}{Resultado}
-    \centering
-    \begin{tikzpicture}
-    \begin{axis}[
-        width=0.78\textwidth, height=0.62\textheight,
-        xlabel={razão de tamanho (rvsc1 / gcc17)},
-        ylabel={razão de tempo (rvsc1 / gcc17)},
-        xmode=log, ymode=log, grid=both,
-        xmin=1, xmax=40, ymin=2.5, ymax=90,
-        label style={font=\small}, tick label style={font=\footnotesize},
-    ]
-    \addplot[only marks, mark=*, mark size=1.6pt, PoliBlue] coordinates {
-        (8.02,15.1) (4.61,24.8) (9.57,11.5) (18.29,6.9) (7.45,23.3)
-        (1.60,3.6) (3.09,7.1) (26.47,26.6) (19.85,21.5) (2.47,3.8)
-        (13.10,30.1) (22.27,30.9) (3.20,26.0) (10.43,14.6) (3.88,6.1)
-        (9.04,50.3) (1.37,39.1) (5.01,6.3) (15.15,59.2)
-    };
-    \addplot[dashed, gray, domain=1:40, samples=2] {x};
-    \node[font=\tiny, anchor=west] at (axis cs:1.37,39.1) {\texttt{ud}};
-    \node[font=\tiny, anchor=east] at (axis cs:15.15,59.2) {\texttt{xgboost}};
-    \node[font=\tiny, anchor=north] at (axis cs:18.29,6.9) {\texttt{edn}};
-    \node[font=\tiny, anchor=east] at (axis cs:26.47,26.6) {\texttt{nettle-aes}};
-    \end{axis}
-    \end{tikzpicture}
+\section{Conclusion}
 
-    \small Linha tracejada: tamanho = tempo. Acima dela, o custo é pago
-    \textbf{dentro do laço}.
-\end{frame}
-% FALAR:
-% - Aqui conto instruções retiradas no Spike, não bytes.
-% - A média dobra em relação ao estático, e a razão é direta: uma síntese cara
-%   dentro de um laço é paga a cada iteração, não uma vez.
-% - O caso ud é o que mais gosto: cresce quase nada em tamanho e quase quarenta
-%   vezes em tempo. Prova que as duas métricas medem coisas diferentes.
-% - E é essa dispersão, não a média, que é o resultado.
-
-\section{Conclusão}
-
-\begin{frame}{Contribuições}{Conclusão}
+\begin{frame}{Contributions}{Conclusion}
     \small
     \begin{itemize}
-        \item Os objetivos foram cumpridos: \texttt{rvsc0} (oito instruções),
-              \texttt{rvsc1} (convenção de chamada C completa com dez),
-              \texttt{rvsc2}--\texttt{rvsc7} (RV32I $\rightarrow$ RV64IMAFD).
-        \item Foram definido derivacoes e otimizacoes para 31 instrucoes diferentes.
-        \item Desenvolvimento de um framework de validacao a partir de testes ja existentes.
-        \item \textbf{Custo:} $\times 6{,}99$ estático, $\times 15{,}8$ dinâmico.
-              Sendo um valor aceitavel para um curso introdutorio.
+        \item The objectives were met:
+        \begin{itemize}
+            \item \texttt{rvsc0} --- eight instructions.
+            \item \texttt{rvsc1} --- a full C calling convention with ten instructions.
+            \item \texttt{rvsc2}--\texttt{rvsc7} --- RV32I $\rightarrow$ RV64IMAFD.
+        \end{itemize}
+        \item Derivations and optimizations were defined for 31 different
+              instructions.
+        \item A validation framework was built on top of already existing test
+              suites.
+        \item \textbf{Cost:} $\times 6.99$ static, $\times 15.8$ dynamic,
+              an acceptable figure for an introductory course.
         \end{itemize}
 \end{frame}
-% FALAR:
-% - Fecho com as três coisas que ficam.
-% - As sínteses, cada uma com sua derivação, prontas para serem lidas.
-% - A metodologia de validação, que vale registrar honestamente: ela não valia
-%   antes desta medição. A tortura falhava 36 combinações, e dois defeitos só
-%   apareceram ao rodar um quarto corpus independente.
-% - E o custo, que é alto, mas é o custo certo: o programa de laboratório de um
-%   curso introdutório não faz shift variável em laço quente.
-% - Pelo contrário: compilar o mesmo fonte para rvsc1 e rvsc2 e diffar o -S
-%   torna o preço de cada restrição de ISA visível para o aluno.
+% SAY:
+% - I close with the three things that remain.
+% - The syntheses, each with its derivation, ready to be read.
+% - The validation methodology, which is worth stating honestly: it did not
+%   hold before this measurement. The torture suite failed 36 combinations, and
+%   two defects only showed up when a fourth independent corpus was run.
+% - And the cost, which is high but is the right cost: an introductory lab
+%   program does not do variable shifts in a hot loop.
+% - On the contrary: compiling the same source for rvsc1 and rvsc2 and diffing
+%   the -S output makes the price of each ISA restriction visible to the student.
 
-\section{Trabalhos Futuros}
+\section{Future Work}
 
-\begin{frame}{Trabalhos futuros}{Conclusao}
+\begin{frame}{Future work}{Conclusion}
     \begin{itemize}
-        \item Otimizacao do SRL/SRA
-        \item Distribuir binários pré-compilados, \textit{startup files} e \textit{linker scripts}
-        \item Rodar o codigo gerado no processador de referencia da diciplina
-        \item testar e medir os targets intermediários.
+        \item Optimize SRL/SRA.
+        \item Ship prebuilt binaries, startup files and linker scripts.
+        \item Run the generated code on the course's reference processor.
+        \item Test and measure the intermediate targets.
     \end{itemize}
 \end{frame}
-% FALAR:
-% - Tecnicamente, o que resta é o shift à direita: hoje ele anda bit a bit e
-%   por isso custa 300 instruções. Mover vários bits por passo é a última
-%   otimização grande.
-% - Mas o trabalho mais importante não é técnico: é empacotar isso para o
-%   aluno usar sem saber que existe um backend por trás.
+% SAY:
+% - Technically what is left is the right shift: today it walks bit by bit and
+%   therefore costs 300 instructions. Moving several bits per step is the last
+%   big optimization.
+% - But the most important work is not technical: it is packaging this so the
+%   student can use it without knowing there is a backend behind it.
 
-\begin{frame}{Referências}{Fontes principais}
+\begin{frame}{References}{Main sources}
     \small
     \begin{itemize}
         \item Patterson \& Hennessy. \textit{Computer Organization and Design:
-              RISC-V Edition}, 2ª ed., Morgan Kaufmann/Elsevier, 2020
-              (Cap. 4.4; Figura 4.21).
+              RISC-V Edition}, 2nd ed., Morgan Kaufmann/Elsevier, 2020
+              (Ch. 4.4; Figure 4.21).
         \item RISC-V ISA Specification; RISC-V psABI.
-        \item GCC Internals Manual (\textit{machine description},
+        \item GCC Internals Manual (machine description,
               \texttt{.opt}, \texttt{CC1\_SPEC}).
-        \item Spike --- simulador de referência de ISA RISC-V.
-        \item Embench-IoT --- suíte de benchmarks embarcados.
+        \item Spike --- RISC-V ISA reference simulator.
+        \item Embench-IoT --- embedded benchmark suite.
     \end{itemize}
     \vfill
-    \centering \Large Obrigado! \quad Perguntas?
+    \centering \Large Thank you! \quad Questions?
 \end{frame}
-% FALAR:
-% - Obrigado. Fico à disposição para perguntas.
+% SAY:
+% - Thank you. I am happy to take questions.
 
 \end{document}

@@ -1,3 +1,131 @@
+\chapter{Using the Toolchain} \label{apx:usage}
+
+This appendix is the practical counterpart to the rest of the work: how to invoke the compiler
+built here, and how to turn a C file into the flat binary image that is loaded into the
+processor's instruction memory.
+
+\section{Invoking the compiler} \label{apx:usage-gcc}
+
+Each target installs a complete GNU toolchain under \nolinkurl{tests/scN/build/install/bin},
+prefixed with its own triple. Putting that directory on \texttt{PATH} is the whole setup:
+
+\begin{lstlisting}
+export PATH=$PWD/tests/sc1/build/install/bin:$PATH
+rvsc1-unknown-elf-gcc --version
+\end{lstlisting}
+
+No \texttt{-mno-*} flag ever has to be passed by hand. The target header injects the correct set
+through \texttt{CC1\_SPEC} (Section~\ref{sec:sc1-flags}), so the restricted ISA is the
+default for that triple and \nolinkurl{rvsc1-unknown-elf-gcc} behaves like an ordinary
+cross-compiler:
+
+\begin{lstlisting}
+# Compile to assembly, to inspect what synthesis produced
+rvsc1-unknown-elf-gcc -O2 -S prog.c -o prog.s
+
+# Compile to an object file
+rvsc1-unknown-elf-gcc -O2 -c prog.c -o prog.o
+
+# Confirm no forbidden mnemonic slipped through: -M no-aliases
+# expands pseudo-instructions, so nothing hides behind "ret"
+rvsc1-unknown-elf-objdump -d -M no-aliases prog.o
+\end{lstlisting}
+
+The individual flags remain available for experimentation: \texttt{-mshift} re-enables the native
+shift instructions on an rvsc1 build, \texttt{-mno-shift} on an rvsc2 build forces the synthesis.
+This is how the cost measurements of Section~\ref{sec:sc1-synthesis-cost} compare a synthesized
+operation against its native form using a single compiler.
+
+\section{Linking a bare-metal program} \label{apx:usage-link}
+
+A program that runs on the real processor has no operating system, no proxy kernel and no C
+runtime to start it: it needs an entry point, a stack pointer, and a linker script that places
+each section at the address the hardware actually decodes. The link line is therefore
+\texttt{-nostdlib} plus an explicit script:
+
+\begin{lstlisting}
+rvsc1-unknown-elf-gcc -O2 -ffreestanding -nostdlib \
+    -fomit-frame-pointer -T flat.ld entry.S prog.c -o prog.elf
+\end{lstlisting}
+
+\nolinkurl{tests/sc0/entry.S} is a working entry point: it loads \texttt{sp} and \texttt{gp}, calls
+a C function, and halts. For a flat memory image the linker script must lay the sections out
+\emph{contiguously} --- the scripts used for the Spike tests deliberately pin \texttt{.data} a
+megabyte above \texttt{.text} so that two builds stay byte-comparable, which is exactly the wrong
+thing to do here, since \texttt{objcopy} would fill the hole with a megabyte of zeros. A minimal
+contiguous script, with the load address at the start of instruction memory:
+
+\begin{lstlisting}
+OUTPUT_ARCH("riscv")
+ENTRY(_start)
+
+SECTIONS
+{
+    . = 0x00000000;          /* start of instruction memory */
+    .text   : { *(.text.entry) *(.text .text.*) }
+    .rodata : { *(.rodata .rodata.*) }
+    .data   : { *(.data .data.*) *(.sdata .sdata.*) }
+    PROVIDE(__global_pointer$ = . + 0x800);
+    .bss    : { *(.sbss .sbss.*) *(.bss .bss.*) *(COMMON)
+                . = ALIGN(4); _end = .; }
+    . = ALIGN(16);
+    . += 0x1000;             /* 4 KiB stack */
+    _stack_top = .;
+}
+\end{lstlisting}
+
+On rvsc0 the same command works with the \nolinkurl{rvsc0-unknown-elf-} prefix, with one
+restriction that is a property of the ISA rather than of the build: without \texttt{jalr} there is
+no return from a call, so the program is a single non-returning function
+(Appendix~\ref{apx:example}). From rvsc1 upward, ordinary multi-function C programs link normally,
+and \texttt{-lc} against the newlib built for the target is also available.
+
+\section{Generating the memory image} \label{apx:usage-binary}
+
+The linked \texttt{.elf} carries symbol tables, section headers and debug information that no
+memory loader wants. \texttt{objcopy} strips all of it and emits the bytes exactly as they will sit
+in memory:
+
+\begin{lstlisting}
+rvsc1-unknown-elf-objcopy -O binary prog.elf prog.bin
+\end{lstlisting}
+
+The result is a headerless image whose first byte corresponds to the lowest load address in the
+ELF. Two checks are worth running once on any new linker script:
+
+\begin{lstlisting}
+# Section sizes: does the image fit in the memory available?
+rvsc1-unknown-elf-size prog.elf
+
+# The image as 32-bit little-endian words, one instruction per
+# column -- the first word must be the first instruction of _start
+od -A n -t x4 -v prog.bin | head
+\end{lstlisting}
+
+If \nolinkurl{prog.bin} comes out far larger than the \texttt{size} output suggests, the linker
+script has a gap in it: \texttt{objcopy} pads every address between the lowest and the highest
+loadable section, so a section pinned at a distant address materializes as zeros in the file.
+Restricting the conversion to the sections of interest, with \texttt{-j .text -j .rodata},
+sidesteps the padding when the layout cannot be changed.
+
+For simulation or synthesis the memory is usually initialized from a text file of hexadecimal
+words rather than from raw bytes. \texttt{objcopy} writes that format directly, and it is the same
+image, only transcribed:
+
+\begin{lstlisting}
+# Verilog hex, one 32-bit word per line, for $readmemh
+rvsc1-unknown-elf-objcopy -O verilog --verilog-data-width=4 \
+    prog.elf prog.hex
+
+# Intel HEX, for loaders that expect it
+rvsc1-unknown-elf-objcopy -O ihex prog.elf prog.ihex
+\end{lstlisting}
+
+The \texttt{--verilog-data-width=4} argument matters: without it \texttt{objcopy} emits one byte
+per entry, and a word-addressed instruction memory loaded from that file would execute the program
+byte-reversed and four times too short.
+
+
 \chapter{Worked Compilation Example} \label{apx:example}
 
 The following expression combines three operations that the restricted targets must synthesize: a

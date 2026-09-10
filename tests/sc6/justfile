@@ -1,0 +1,5 @@
+target := "rvsc6-unknown-elf"
+
+import "../common.just"
+
+default: setup

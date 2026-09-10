@@ -202,6 +202,10 @@ rvsc2-unknown-elf-gcc -O2 -ffreestanding \
     -c program.c -o program.o
 \end{lstlisting}
 
+Appendix~\ref{apx:usage} carries this through to a runnable artifact: linking a bare-metal
+program against an explicit linker script, and converting the result into the flat binary or
+hexadecimal image a memory loader expects.
+
 \section{Synthesis Derivations} \label{sec:sc1-synthesis}
 
 \textbf{Assembly notation.} In the listings below, \texttt{rd}, \texttt{rs1}, and \texttt{rs2} denote
@@ -219,12 +223,15 @@ can be replaced by equivalent sequences without additional constraints.
 
 \subsubsection{Bitwise NOT} \label{sec:sc1-not}
 
-The standard RISC-V pseudo-instruction \texttt{not rd, rs1} expands to \texttt{xori rd, rs1, -1}.
+\texttt{not rd, rs1} computes the bitwise complement, $\mathit{rd}_i = 1 - \mathit{rs1}_i$ for
+every bit position $i$; in C it is the unary \texttt{\~{}} operator. It is not a real RISC-V
+instruction: the standard pseudo-instruction \texttt{not rd, rs1} expands to
+\texttt{xori rd, rs1, -1}, complementing every bit by exclusive-oring it with a word of ones.
 Neither sc0 nor sc1 include \texttt{xori}, so a different derivation is required.
 
 \textbf{Proof.} In two's complement, negation satisfies $-x = \mathord{\sim}x + 1$ for all $x$.
 Rearranging: $\mathord{\sim}x = -x - 1$. Both subtraction from zero (\texttt{sub rd, x0, rs1}) and
-decrement by one (\texttt{addi rd, rd, -1}) are available in sc0 and sc1. $\square$
+decrement by one (\texttt{addi rd, rd, -1}) are available in sc0 and sc1.
 
 \begin{lstlisting}
 sub  rd, x0, rs1    # rd = -rs1
@@ -236,7 +243,10 @@ and rvsc1.
 
 \subsubsection{XOR ($\mathtt{R[rd] = R[rs1] \oplus R[rs2]}$)} \label{sec:sc1-xor}
 
-Neither sc0 nor sc1 include \texttt{xor} or \texttt{xori}.
+\texttt{xor rd, rs1, rs2} computes the bitwise exclusive or, setting each output bit iff the two
+input bits differ; it is the operation that distinguishes two words bit by bit, and it is what
+checksums, hashes and ciphers are largely made of. Neither sc0 nor sc1 include \texttt{xor} or its
+immediate form \texttt{xori}.
 
 \textbf{Proof.} Claim: $a \oplus b = (a \mid b) - (a \mathbin{\&} b)$ for all 32-bit words $a, b$,
 where the subtraction is ordinary two's-complement subtraction.
@@ -266,7 +276,7 @@ b$ are always a subset of the 1-bits of $a \mid b$. Consequently the per-bit sub
 to borrow from a neighboring bit position; interpreting $a \mid b$ and $a \mathbin{\&} b$ as 32-bit
 binary numbers, the ordinary two's-complement subtraction \texttt{sub rd, ab\_ior, ab\_and} computes
 exactly the bitwise difference, with no cross-bit borrow propagation. Hence the instruction-level
-subtraction yields $a \oplus b$ exactly, for every $a, b$. $\square$
+subtraction yields $a \oplus b$ exactly, for every $a, b$.
 
 \begin{lstlisting}
 and  t0, rs1, rs2   # t0 = rs1 & rs2
@@ -310,7 +320,7 @@ $\text{sll}(x, n) = x \cdot 2^n \pmod{2^{32}}$.
 
 The synthesis implements this recursion as $b$ repeated doublings, where $b$ is the masked shift
 amount. GCC lowers this two different ways depending on whether $b$ is known at compile time.
-$\square$
+
 
 \begin{lstlisting}[language=C]
 uint32_t sll(uint32_t rs1, uint32_t rs2) {
@@ -373,7 +383,7 @@ is copied from input bit $i + s$ using two single-bit masks that scan upward tog
 \texttt{in\_mask} overflows past bit 31 (becoming 0), meaning all input positions at or above $s$
 have been processed. Output bits 0 through $31 - s$ are set from the corresponding input bits; bits
 above $31 - s$ are never set (their input positions have overflowed), correctly implementing
-zero-fill. $\square$
+zero-fill.
 
 \begin{lstlisting}[language=C]
 uint32_t srl(uint32_t x, uint32_t shift) {
@@ -428,7 +438,7 @@ If $b_{31} = 0$, the \texttt{srl} result already has all upper bits zero; no cor
 
 If $b_{31} = 1$, the upper $s$ bits must be 1. The mask $(-1) \ll (32 - s)$ has exactly the top $s$
 bits set, since $-1$ in two's complement is all-ones, and left-shifting by $k$ clears the low $k$
-bits. OR-ing this mask into the \texttt{srl} result sets the upper $s$ bits correctly. $\square$
+bits. OR-ing this mask into the \texttt{srl} result sets the upper $s$ bits correctly.
 
 \begin{lstlisting}[language=C]
 uint32_t sra(uint32_t x, uint32_t shift) {
@@ -487,7 +497,7 @@ Verification by case analysis on the sign bits of $a = \mathit{rs1}$ and $b = \m
         $\mathit{diff}_{31} = 0$ (wrong); $\mathit{overflow}_{31} = 1$;
         $\mathit{corrected}_{31} = 0 \oplus 1 = 1$. Correct. If no underflow:
         $\mathit{diff}_{31} = 1$; $\mathit{overflow}_{31} = 0$;
-        $\mathit{corrected}_{31} = 1$. Correct. $\square$
+        $\mathit{corrected}_{31} = 1$. Correct.
 \end{itemize}
 
 \begin{lstlisting}[language=C]
@@ -508,7 +518,7 @@ borrow at the MSB. A borrow is \textit{generated} at bit $i$ when $\mathit{rs1}_
 $\mathit{rs2}_i = 1$, captured by $\mathord{\sim}\mathit{rs1} \mathbin{\&} \mathit{rs2}$. A borrow
 is \textit{propagated} when $\mathit{rs1}_i = \mathit{rs2}_i$ and a borrow arrived from below,
 captured by $\mathord{\sim}(\mathit{rs1} \oplus \mathit{rs2}) \mathbin{\&} \mathit{diff}$. The MSB
-of their union is 1 iff \texttt{rs1 < rs2} (unsigned). $\square$
+of their union is 1 iff \texttt{rs1 < rs2} (unsigned).
 
 \begin{lstlisting}[language=C]
 uint32_t sltu(uint32_t a, uint32_t b) {
@@ -545,8 +555,12 @@ The expansion costs 3 instructions and one extra register.
 
 \subsubsection{BLT, BGE, BLTU, BGEU} \label{sec:sc1-ordered-branches}
 
-Each ordered branch is synthesized using \texttt{[slt]} or \texttt{[sltu]} followed by a \texttt{beq}
-or \texttt{bne} test.
+The four ordered branches are RV32I's inequality tests: \texttt{blt} and \texttt{bge} branch on
+$<$ and $\geq$ reading both registers as signed, \texttt{bltu} and \texttt{bgeu} do the same
+reading them as unsigned. RV32I has no \texttt{bgt} or \texttt{ble} because swapping the two
+register operands turns one into the other, which is why four instructions cover all six relations
+per signedness. sc0 and sc1 have only \texttt{beq}, so each ordered branch is synthesized using
+\texttt{[slt]} or \texttt{[sltu]} followed by a \texttt{beq} or \texttt{bne} test.
 
 \textbf{Equivalence.} A ``branch if less-than'' is equivalent to computing the comparison into a
 register and branching on that register being nonzero; ``branch if greater-than-or-equal'' branches
@@ -586,9 +600,12 @@ value-producing form only, and no ordered branch pays them.
 
 \subsection{Immediate Variants} \label{sec:sc1-immediates}
 
-The instructions \texttt{andi}, \texttt{ori}, \texttt{xori}, \texttt{slli}, \texttt{srli},
-\texttt{srai}, \texttt{slti}, and \texttt{sltiu} encode a register together with a 12-bit signed
-immediate. Neither sc0 nor sc1 support any of these forms. Each is synthesized by loading the
+Most RV32I arithmetic and logic instructions come in a second form that takes a 12-bit signed
+constant in place of the second register, saving the instruction that would otherwise have loaded
+that constant; the mnemonic is the register form with an \texttt{i} appended. The instructions
+\texttt{andi}, \texttt{ori}, \texttt{xori}, \texttt{slli}, \texttt{srli},
+\texttt{srai}, \texttt{slti}, and \texttt{sltiu} are those forms of the operations synthesized
+above (for the shifts, the immediate carries the shift count rather than an operand). Neither sc0 nor sc1 support any of these forms. Each is synthesized by loading the
 immediate into a temporary register via \texttt{addi} and calling the corresponding
 register--register variant:
 
@@ -640,6 +657,11 @@ $\mathit{hi20}$ itself fits \texttt{addi}, it collapses to 13--14.
 
 \subsubsection{LB, LBU, LH, LHU} \label{sec:sc1-lb-synthesis}
 
+These are RV32I's narrow loads. \texttt{lb} and \texttt{lh} read one byte and one halfword from
+memory and sign-extend it to 32 bits, so a negative \texttt{signed char} or \texttt{short} arrives
+in the register as a negative word; \texttt{lbu} and \texttt{lhu} read the same units and
+zero-extend them instead, which is what an \texttt{unsigned char} or \texttt{unsigned short}
+requires. Unlike \texttt{lw}, they have no alignment requirement beyond that of the unit itself.
 Since sc1 supports only \texttt{lw} (32-bit word loads), every byte or halfword load is synthesized
 in four steps: align the address to a word boundary, load the word, extract the target unit by shift,
 and sign-extend or zero-extend.
@@ -652,7 +674,7 @@ to bits $[N-1:0]$ where $N$ is 8 or 16. A subsequent shift pair of $32-N$ bits, 
 --- isolates the unit and performs either sign extension (arithmetic right shift, for \texttt{lb}/
 \texttt{lh}) or zero extension (logical right shift, for \texttt{lbu}/\texttt{lhu}). This is correct
 for any address alignment because the memory model is little-endian and the bit offset exactly encodes
-the unit's position within the word. $\square$
+the unit's position within the word.
 
 This algorithm makes no assumption about the address: the offset is recomputed at run time from the
 pointer itself, so it is correct for a pointer whose value the compiler never sees.
@@ -718,7 +740,13 @@ which is the conservative direction.
 
 \subsubsection{SB and SH} \label{sec:sc1-sb}
 
-A byte store (\texttt{sb}) or halfword store (\texttt{sh}) is implemented as a read-modify-write:
+\texttt{sb rs2, imm(rs1)} writes the low 8 bits of \texttt{rs2} to memory and \texttt{sh} the
+low 16, leaving the surrounding bytes of the containing word untouched; they are the store
+counterparts of \texttt{lb}/\texttt{lh}, and unlike the loads they have no signed and unsigned
+variants, since a store simply discards the upper bits either way. That the neighbours must survive
+is exactly what makes the synthesis harder than the load case: sc1 can only write a whole word.
+A byte store (\texttt{sb}) or halfword store (\texttt{sh}) is therefore implemented as a
+read-modify-write:
 load the word containing the target location, clear the target bits, insert the new value, and write
 back. The sequence below computes the bit offset at run time, for a base address the compiler cannot
 resolve; when it can, the same compile-time fold described in Section~\ref{sec:sc1-subword-const}
@@ -732,7 +760,7 @@ applies, and the offset becomes a constant.
 $(\mathtt{word} \mathbin{\&} \mathord{\sim}\mathtt{mask})_i = 0$ and $(\mathtt{val} \mathbin{\&}
 \mathtt{mask})_i = \mathtt{val}_i$, yielding $\mathtt{val}_i$; if $\mathtt{mask}_i = 0$, then
 $(\mathtt{val} \mathbin{\&} \mathtt{mask})_i = 0$ and $(\mathtt{word} \mathbin{\&}
-\mathord{\sim}\mathtt{mask})_i = \mathtt{word}_i$, yielding $\mathtt{word}_i$. $\square$
+\mathord{\sim}\mathtt{mask})_i = \mathtt{word}_i$, yielding $\mathtt{word}_i$.
 
 \begin{lstlisting}[language=C]
 void sb(uint8_t *addr, uint32_t rs2) {

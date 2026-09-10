@@ -98,6 +98,80 @@ divide (MUL, MULH, DIV, REM and variants). The A extension provides atomic memor
 (load-reserved/store-conditional pairs LR/SC and a family of AMO instructions). The F and D extensions
 add single- and double-precision IEEE~754 floating-point.
 
+\section{The Eight Base Instructions} \label{sec:eight-base}
+
+The subset this work targets first (rvsc0, and everything rvsc1 adds to it) is the eight instructions
+of the Hennessy-Patterson single-cycle datapath: \texttt{lw}, \texttt{sw}, \texttt{beq},
+\texttt{add}, \texttt{addi}, \texttt{sub}, \texttt{and}, and \texttt{or}. Because every synthesis
+sequence in Chapter~\ref{cap:development} is built from these eight and nothing else, their exact
+semantics are the ground on which the rest of the work rests. Table~\ref{tab:eight-base} states them;
+\texttt{sext} denotes sign extension of the immediate field to 32 bits, \texttt{M[a]} the word of
+data memory at address \texttt{a}, and \texttt{R[r]} the contents of register \texttt{r}.
+
+\begin{table}[htb]
+\centering
+\caption{The eight instructions of the Hennessy-Patterson single-cycle subset}
+\label{tab:eight-base}
+\begin{tabular}{@{}llp{7.4cm}@{}}
+\toprule
+\textbf{Instruction} & \textbf{Format} & \textbf{Semantics} \\
+\midrule
+\texttt{add rd, rs1, rs2}  & R & $\mathtt{R[rd] \leftarrow R[rs1] + R[rs2]}$, discarding overflow \\
+\texttt{sub rd, rs1, rs2}  & R & $\mathtt{R[rd] \leftarrow R[rs1] - R[rs2]}$, discarding overflow \\
+\texttt{and rd, rs1, rs2}  & R & $\mathtt{R[rd] \leftarrow R[rs1] \mathbin{\&} R[rs2]}$, bitwise \\
+\texttt{or rd, rs1, rs2}   & R & $\mathtt{R[rd] \leftarrow R[rs1] \mid R[rs2]}$, bitwise \\
+\texttt{addi rd, rs1, imm} & I & $\mathtt{R[rd] \leftarrow R[rs1] + sext(imm)}$, $\mathit{imm}$ a
+                                 12-bit signed field, so $-2048 \leq \mathit{imm} \leq 2047$ \\
+\texttt{lw rd, imm(rs1)}   & I & $\mathtt{R[rd] \leftarrow M[R[rs1] + sext(imm)]}$, the address must
+                                 be a multiple of four \\
+\texttt{sw rs2, imm(rs1)}  & S & $\mathtt{M[R[rs1] + sext(imm)] \leftarrow R[rs2]}$, same alignment
+                                 requirement \\
+\texttt{beq rs1, rs2, L}   & B & $\mathtt{PC \leftarrow PC + sext(offset)}$ if
+                                 $\mathtt{R[rs1] = R[rs2]}$, else $\mathtt{PC \leftarrow PC + 4}$;
+                                 the offset reaches $\pm 4$\,KiB \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The four register-to-register operations are the whole of the subset's computation. \texttt{add} and
+\texttt{sub} are two's-complement addition and subtraction on all 32 bits, with no trap and no flag
+on overflow, which is what allows them to be used interchangeably for signed and unsigned arithmetic
+and to be reasoned about as arithmetic modulo $2^{32}$. Combined with the hardwired zero register,
+\texttt{sub} also serves as negation (\texttt{sub rd, x0, rs1}), and this is the door through which
+several syntheses enter: bitwise NOT (Section~\ref{sec:sc1-not}) follows from
+$\mathord{\sim}x = -x - 1$, and comparison (Section~\ref{sec:sc1-slt}) from the sign bit of a
+difference. \texttt{and} and \texttt{or} operate bit by bit with no interaction between bit
+positions, so they express masking (isolating a field) and merging (combining disjoint fields); with
+\texttt{sub} available to remove the doubly-set bits, they are also enough to express exclusive or
+(Section~\ref{sec:sc1-xor}), which the subset omits.
+
+\texttt{addi} adds a constant instead of a register, and does two jobs beyond arithmetic. With
+\texttt{x0} as the source it loads any constant in $[-2048, 2047]$ into a register, which is the
+\texttt{li} pseudo-instruction and the only way the subset produces a value out of nothing; with an
+immediate of zero it copies one register to another, which is \texttt{mv}. Constants outside the
+12-bit range have no single-instruction form here, since the subset has no \texttt{lui}, and must be
+assembled from several \texttt{addi} and \texttt{add} instructions (Section~\ref{sec:sc0-lui}).
+
+\texttt{lw} and \texttt{sw} are the only instructions that touch memory, and they move exactly one
+naturally aligned 32-bit word. Their address is a register plus a 12-bit signed displacement, the
+form that makes a stack frame or a structure field a single instruction away from its base pointer.
+That the subset has no narrower access is the source of the most expensive synthesis in this work:
+a \texttt{char} or \texttt{short} access has to be rebuilt as a word load, a shift and a mask
+(Section~\ref{sec:sc1-lb-synthesis}), and a narrow store additionally as a read-modify-write of the
+containing word (Section~\ref{sec:sc1-sb}).
+
+\texttt{beq} is the subset's only control transfer. It compares two registers for equality and, when
+they are equal, adds a signed offset to the program counter; the offset is PC-relative, which is what
+lets it work without any of the address-materializing instructions the subset lacks. Two consequences
+run through the rest of the work. First, equality is the only condition the hardware tests, so every
+ordered comparison must be reduced to one (Sections~\ref{sec:sc1-bne}
+and~\ref{sec:sc1-ordered-branches}). Second, because \texttt{x0} always equals itself,
+\texttt{beq x0, x0, L} is an unconditional jump costing a single instruction, which is how the
+synthesized loops close their back edges (Section~\ref{sec:sc1-backedge}). What \texttt{beq} cannot
+do is record where it came from: there is no return address, and therefore no function call, which is
+the limitation Section~\ref{sec:sc0-no-calls} describes and the reason rvsc1 adds \texttt{jalr} and
+\texttt{lui} before anything else.
+
 \section{Single-Cycle Processor Architecture}
 
 A single-cycle processor completes every instruction in exactly one clock cycle. The datapath consists
